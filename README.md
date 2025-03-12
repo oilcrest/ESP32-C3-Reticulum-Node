@@ -27,7 +27,6 @@ This project, developed by Akita Engineering, provides a ready-to-deploy Reticul
     git clone [repository_url]
     cd [repository_directory]
     ```
-    *Replace `[repository_url]` with the actual repository URL and `[repository_directory]` with the directory name.*
 2.  **Open the Arduino IDE:**
     * Open the `[your_sketch_name].ino` file in the Arduino IDE.
 3.  **Configure WiFi:**
