@@ -72,4 +72,4 @@ Contributions are welcome! Please feel free to submit pull requests or open issu
 
 ### About Akita Engineering
 
-This project is developed by Akita Engineering, a group dedicated to open-source hardware and software projects. Visit our website at [Akita Engineering Website - if you have one] for more information about our projects.
+This project is developed by Akita Engineering, a group dedicated to open-source hardware and software projects. Visit our website at akitaengineering.com for more information about our projects.
