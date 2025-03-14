@@ -59,12 +59,9 @@ This project, developed by Akita Engineering, provides a ready-to-deploy Reticul
 
 ### Considerations
 
-* **Reticulum Software:** Ensure you have appropriate Reticulum software on your laptop.
 * **Address Management:** Assign unique Reticulum addresses to all devices on your network.
 * **EEPROM Wear:** EEPROM has a limited number of write cycles.
 * **Security:** This implementation does not include security features.
-* **Testing:** Thoroughly test your setup in a safe environment.
-* **Power usage:** Consider power saving implementations.
 
 ### Contributing
 
