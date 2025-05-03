@@ -46,7 +46,7 @@ This project is built upon a refactored C++ codebase using PlatformIO (recommend
 
 1.  **Clone:** Clone this repository to your local machine:
     ```bash
-    git clone <repository_url>
+    git clone [<repository_url>](https://github.com/AkitaEngineering/ESP32-C3-Reticulum-Node)
     cd esp32-c3-reticulum-gateway
     ```
 2.  **Configure:**
