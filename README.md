@@ -1,8 +1,5 @@
 # ESP32-C3 Reticulum Gateway
 
-**Developed by Akita Engineering**
-
-
 ## Overview
 
 This project provides firmware to turn an ESP32-C3 (or compatible ESP32 variant) into a multi-interface Reticulum Network Stack gateway node. It allows devices communicating via different physical layers (WiFi UDP, ESP-NOW, Serial, Bluetooth) to exchange Reticulum packets seamlessly.
