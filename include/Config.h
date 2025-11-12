@@ -6,12 +6,34 @@
 #include <vector>
 #include <array> // For group addresses
 
+// --- Debug and Interface Configuration ---
+// Use Serial (UART0/USB) for debug messages (normal Arduino Serial Monitor)
+// Use Serial1/Serial2 (UART1/UART2) for KISS interface with Reticulum
+
+#define DEBUG_ENABLED 1  // Set to 0 to completely disable debug
+
+#define DebugSerial Serial    // Use USB/UART0 for debug (Arduino Serial Monitor)
+
+// ESP32-C3 only has UART0 and UART1 (no UART2)
+// ESP32 has UART0, UART1, and UART2
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+    #define KissSerial Serial1    // ESP32-C3: Use UART1 for KISS
+    #define KISS_UART_RX 18       // ESP32-C3 UART1 default RX pin
+    #define KISS_UART_TX 19       // ESP32-C3 UART1 default TX pin
+#else
+    #define KissSerial Serial2    // ESP32: Use UART2 for KISS
+    #define KISS_UART_RX 16       // ESP32 UART2 RX pin
+    #define KISS_UART_TX 17       // ESP32 UART2 TX pin
+#endif
+
+#define KISS_SERIAL_SPEED 115200
+
 // --- WiFi Credentials ---
-const char *WIFI_SSID = "YourWiFiSSID"; // <<< CHANGE ME
-const char *WIFI_PASSWORD = "YourWiFiPassword"; // <<< CHANGE ME
+extern const char *WIFI_SSID; // <<< CHANGE ME in Config.cpp
+extern const char *WIFI_PASSWORD; // <<< CHANGE ME in Config.cpp
 
 // --- Node Configuration ---
-const char *BT_DEVICE_NAME = "ESP32-C3-RNSGW"; // Changed slightly from default
+extern const char *BT_DEVICE_NAME;
 const int EEPROM_ADDR_NODE = 0;  // 8 bytes
 const int EEPROM_ADDR_PKTID = 8; // 2 bytes (Start after node address)
 const int EEPROM_SIZE = 16;      // Min size needed (8+2 = 10, use 16 or 32)
@@ -52,7 +74,7 @@ const std::vector<std::array<uint8_t, RNS_ADDRESS_SIZE>> SUBSCRIBED_GROUPS = {
 enum class InterfaceType {
     UNKNOWN,
     LOCAL, // For packets originating from this node
-    SERIAL,
+    SERIAL_PORT,
     BLUETOOTH,
     ESP_NOW,
     WIFI_UDP

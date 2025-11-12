@@ -1,157 +1,196 @@
 #include "ReticulumPacket.h"
 #include "Config.h"
-#include <Arduino.h> // For Serial debug prints
-#include <cstring>   // For memcpy
+#include <Arduino.h>
+#include <cstring>
 
 namespace ReticulumPacket {
 
+// Deserialize packet from official Reticulum wire format
+// Format: [FLAGS 1] [HOPS 1] [DEST_HASH 16] [CONTEXT 1] [DATA]
 bool deserialize(const uint8_t *buffer, size_t len, RnsPacketInfo &info) {
-    info.valid = false; // Assume invalid until parsed
-    if (!buffer || len < RNS_MIN_HEADER_SIZE) {
-        Serial.println("! Deserialize Error: Null buffer or packet too short.");
+    info.valid = false;
+
+    if (!buffer || len < RNS_HEADER_1_SIZE) {
+        DebugSerial.println("! Deserialize Error: Null buffer or packet too short.");
         return false;
     }
 
-    info.header_type = buffer[0];
-    info.context = buffer[1];
-    info.packet_id = (buffer[2] << 8) | buffer[3]; // Network byte order (Big Endian)
-    info.hops = buffer[4];
-    info.destination_type = buffer[5];
-    uint8_t destination_len = buffer[6];
+    // Parse header
+    info.flags = buffer[0];
+    info.parseFlags();  // Extract bitfields from flags byte
 
-    if ((info.destination_type != RNS_DST_TYPE_SINGLE && info.destination_type != RNS_DST_TYPE_GROUP) || destination_len != RNS_ADDRESS_SIZE) {
-         Serial.println("! Deserialize Error: Unsupported destination type/len.");
-         return false;
+    info.hops = buffer[1];
+
+    // Copy 16-byte destination hash
+    memcpy(info.destination_hash, buffer + 2, RNS_TRUNCATED_HASHLENGTH_BYTES);
+
+    info.context = buffer[18];  // After flags(1) + hops(1) + dest_hash(16)
+
+    // Extract data payload (everything after context byte)
+    size_t data_start = 19;
+    if (len > data_start) {
+        info.data.assign(buffer + data_start, buffer + len);
     }
-    memcpy(info.destination, buffer + 7, RNS_ADDRESS_SIZE);
 
-    info.source_type = buffer[15];
-    uint8_t source_len = buffer[16];
-     if (info.source_type != RNS_DST_TYPE_SINGLE || source_len != RNS_ADDRESS_SIZE) {
-         Serial.println("! Deserialize Error: Unsupported source type/len.");
-         return false;
-     }
-    memcpy(info.source, buffer + 17, RNS_ADDRESS_SIZE);
-
-    size_t headerSize = RNS_MIN_HEADER_SIZE; // Assuming Type 1/2 addr lengths
-    size_t payloadLen = len - headerSize;
-
-    if (payloadLen > RNS_MAX_PAYLOAD) {
-        Serial.println("! Deserialize Error: Payload exceeds max size.");
-        return false;
-    }
-    // Use assign for safer vector copy
-    info.payload.assign(buffer + headerSize, buffer + headerSize + payloadLen);
     info.packet_len = len;
-    info.valid = true; // Passed basic checks
-
-    // Extract sequence number if applicable (might invalidate if format wrong)
-    info.processPayloadForLink();
-
-    if (!info.valid) {
-        // Serial.println("! Deserialize Error: Invalid link payload format (e.g., missing seq num).");
-        // processPayloadForLink already set valid to false
-        return false;
-    }
+    info.valid = true;
 
     return true;
 }
 
-// Main serializer - handles embedding sequence number
+// Serialize packet using official Reticulum wire format
+// Format: [FLAGS 1] [HOPS 1] [DEST_HASH 16] [CONTEXT 1] [DATA]
 bool serialize(uint8_t *buffer, size_t &len,
-               const uint8_t* dest, const uint8_t* src,
-               uint8_t dest_type, uint8_t header_type, uint8_t context,
-               uint16_t packet_id, uint8_t hops,
-               const std::vector<uint8_t>& data_payload, // Actual data
-               uint16_t sequence_num) // Sequence number to embed
+               const uint8_t* dest_hash_16bytes,
+               uint8_t packet_type,
+               uint8_t dest_type,
+               uint8_t propagation_type,
+               uint8_t context,
+               uint8_t hops,
+               const std::vector<uint8_t>& data)
 {
-    len = 0; // Reset length
-    if (!buffer || !dest || !src) {
-        Serial.println("! Serialize Error: Null buffer or address pointer.");
+    len = 0;
+
+    if (!buffer || !dest_hash_16bytes) {
+        DebugSerial.println("! Serialize Error: Null buffer or dest hash.");
         return false;
     }
 
-    size_t payload_offset = 0;
-    size_t total_payload_size = data_payload.size();
-
-    // Check if sequence number needs to be prepended
-    bool needs_sequence = (context == RNS_CONTEXT_LINK_DATA || (header_type == RNS_HEADER_TYPE_ACK && context == RNS_CONTEXT_ACK));
-
-    if (needs_sequence) {
-        total_payload_size += RNS_SEQ_SIZE;
-    }
-
-    if (total_payload_size > RNS_MAX_PAYLOAD) {
-        Serial.println("! Serialize Error: Total payload exceeds max size.");
+    if (data.size() > RNS_MAX_PAYLOAD) {
+        DebugSerial.println("! Serialize Error: Payload exceeds max size.");
         return false;
     }
 
-    size_t requiredLen = RNS_MIN_HEADER_SIZE + total_payload_size;
-    if (requiredLen > MAX_PACKET_SIZE) { // Check against absolute max
-        Serial.println("! Serialize Error: Total packet exceeds max buffer size.");
+    size_t total_len = RNS_HEADER_1_SIZE + data.size();
+    if (total_len > MAX_PACKET_SIZE) {
+        DebugSerial.println("! Serialize Error: Total packet exceeds max size.");
         return false;
     }
 
-    // --- Fill Header ---
-    buffer[0] = header_type;
-    buffer[1] = context;
-    buffer[2] = (packet_id >> 8) & 0xFF; // Network byte order
-    buffer[3] = packet_id & 0xFF;
-    buffer[4] = hops;
-    buffer[5] = dest_type;
-    buffer[6] = RNS_ADDRESS_SIZE; // Assuming Type 1/2
-    memcpy(buffer + 7, dest, RNS_ADDRESS_SIZE);
-    buffer[15] = RNS_DST_TYPE_SINGLE; // Source is always SINGLE
-    buffer[16] = RNS_ADDRESS_SIZE;
-    memcpy(buffer + 17, src, RNS_ADDRESS_SIZE);
+    // Build flags byte
+    // Format: [IFAC:1][HeaderType:1][ContextFlag:1][PropType:1][DestType:2][PacketType:2]
+    uint8_t flags = (packet_type & 0b11) |
+                    ((dest_type & 0b11) << 2) |
+                    ((propagation_type & 0b1) << 4) |
+                    (0 << 5) |  // context_flag = 0 for now
+                    (0 << 6) |  // header_type = 0 (HEADER_1)
+                    (0 << 7);   // ifac_flag = 0 (no IFAC)
 
-    // --- Fill Payload ---
-    uint8_t* payload_ptr = buffer + RNS_MIN_HEADER_SIZE;
-    if (needs_sequence) {
-        // Prepend sequence number (Network Byte Order - Big Endian)
-        payload_ptr[0] = (sequence_num >> 8) & 0xFF;
-        payload_ptr[1] = sequence_num & 0xFF;
-        payload_offset = RNS_SEQ_SIZE;
+    // Assemble packet
+    buffer[0] = flags;
+    buffer[1] = hops;
+    memcpy(buffer + 2, dest_hash_16bytes, RNS_TRUNCATED_HASHLENGTH_BYTES);
+    buffer[18] = context;
+
+    // Copy data payload if present
+    if (!data.empty()) {
+        memcpy(buffer + 19, data.data(), data.size());
     }
 
-    // Copy actual data payload if it exists
-    if (!data_payload.empty()) {
-        memcpy(payload_ptr + payload_offset, data_payload.data(), data_payload.size());
-    }
-
-    len = requiredLen;
+    len = total_len;
     return true;
 }
 
-// Helper for simple control packets (ACK, REQ, CLOSE)
-bool serialize_control(uint8_t* buffer, size_t& len,
-                        const uint8_t* dest, const uint8_t* src,
-                        uint8_t header_type, uint8_t context,
-                        uint16_t packet_id,
-                        uint16_t sequence_num_for_ack) // Embed seq num in payload for ACK
+// --- Legacy Custom Format Functions (for Link layer) ---
+
+// Legacy serialize for data packets with sequence numbers
+// This is a stub implementation - the Link layer uses a different custom format
+// For now, we'll create a minimal compatible format
+bool serialize(uint8_t *buffer, size_t &len,
+               const uint8_t* destination,
+               const uint8_t* source,
+               uint8_t destination_type,
+               uint8_t header_type,
+               uint8_t context,
+               uint16_t packet_id,
+               uint8_t hops,
+               const std::vector<uint8_t>& payload,
+               uint16_t sequence_number)
 {
-    if (!buffer || !dest || !src) {
-        Serial.println("! Serialize Control Error: Null buffer or address pointer.");
+    len = 0;
+    if (!buffer || !destination || !source) {
+        DebugSerial.println("! Legacy Serialize Error: Null buffer/dest/src.");
         return false;
     }
 
-    std::vector<uint8_t> payload_data; // Payload is often empty for control
-    uint16_t sequence_to_embed = 0; // Main sequence number field usually 0 for control
+    // Legacy format: [HEADER_TYPE 1] [CONTEXT 1] [PACKET_ID 2] [HOPS 1]
+    //                [DST_TYPE 1] [DST_LEN 1] [DEST 8] [SRC_TYPE 1] [SRC_LEN 1] [SRC 8]
+    //                [SEQ_NUM 2] [PAYLOAD...]
 
-    if (header_type == RNS_HEADER_TYPE_ACK && context == RNS_CONTEXT_ACK) {
-        // ACKs payload contains the sequence number being acknowledged
-        payload_data.resize(RNS_SEQ_SIZE);
-        payload_data[0] = (sequence_num_for_ack >> 8) & 0xFF;
-        payload_data[1] = sequence_num_for_ack & 0xFF;
-    }
-    // For REQ, CLOSE - payload_data remains empty
+    size_t offset = 0;
 
-    // Call main serialize
-    bool ok = serialize(buffer, len, dest, src, RNS_DST_TYPE_SINGLE, header_type, context, packet_id, 0, payload_data, sequence_to_embed);
-    if (!ok) {
-        Serial.println("! Serialize Control Error: Underlying serialize failed.");
+    buffer[offset++] = header_type;
+    buffer[offset++] = context;
+    buffer[offset++] = (packet_id >> 8) & 0xFF;  // packet_id high byte
+    buffer[offset++] = packet_id & 0xFF;         // packet_id low byte
+    buffer[offset++] = hops;
+    buffer[offset++] = destination_type;
+    buffer[offset++] = RNS_ADDRESS_SIZE;  // dest length
+    memcpy(buffer + offset, destination, RNS_ADDRESS_SIZE);
+    offset += RNS_ADDRESS_SIZE;
+
+    buffer[offset++] = RNS_DST_TYPE_SINGLE;  // source type (always SINGLE)
+    buffer[offset++] = RNS_ADDRESS_SIZE;     // source length
+    memcpy(buffer + offset, source, RNS_ADDRESS_SIZE);
+    offset += RNS_ADDRESS_SIZE;
+
+    // Add sequence number for data packets
+    buffer[offset++] = (sequence_number >> 8) & 0xFF;
+    buffer[offset++] = sequence_number & 0xFF;
+
+    // Add payload
+    if (!payload.empty()) {
+        if (offset + payload.size() > MAX_PACKET_SIZE) {
+            DebugSerial.println("! Legacy Serialize Error: Payload too large.");
+            return false;
+        }
+        memcpy(buffer + offset, payload.data(), payload.size());
+        offset += payload.size();
     }
-    return ok;
+
+    len = offset;
+    return true;
+}
+
+// Legacy serialize for control packets (LINK_REQ, ACK, LINK_CLOSE)
+bool serialize_control(uint8_t *buffer, size_t &len,
+                       const uint8_t* destination,
+                       const uint8_t* source,
+                       uint8_t header_type,
+                       uint8_t context,
+                       uint16_t packet_id,
+                       uint16_t sequence_number)
+{
+    len = 0;
+    if (!buffer || !destination || !source) {
+        DebugSerial.println("! Legacy Control Serialize Error: Null buffer/dest/src.");
+        return false;
+    }
+
+    // Control packet format: simpler, just sequence number as payload
+    size_t offset = 0;
+
+    buffer[offset++] = header_type;
+    buffer[offset++] = context;
+    buffer[offset++] = (packet_id >> 8) & 0xFF;
+    buffer[offset++] = packet_id & 0xFF;
+    buffer[offset++] = 0;  // hops = 0
+    buffer[offset++] = RNS_DST_TYPE_SINGLE;
+    buffer[offset++] = RNS_ADDRESS_SIZE;
+    memcpy(buffer + offset, destination, RNS_ADDRESS_SIZE);
+    offset += RNS_ADDRESS_SIZE;
+
+    buffer[offset++] = RNS_DST_TYPE_SINGLE;
+    buffer[offset++] = RNS_ADDRESS_SIZE;
+    memcpy(buffer + offset, source, RNS_ADDRESS_SIZE);
+    offset += RNS_ADDRESS_SIZE;
+
+    // For ACK packets, include the sequence number being acknowledged
+    buffer[offset++] = (sequence_number >> 8) & 0xFF;
+    buffer[offset++] = sequence_number & 0xFF;
+
+    len = offset;
+    return true;
 }
 
 } // namespace ReticulumPacket

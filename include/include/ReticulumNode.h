@@ -38,6 +38,7 @@ public:
 private:
     // --- Initialization Helpers ---
     void loadConfig();                // Loads address/packet ID from EEPROM
+    void loadOrGenerateAddress();     // Load existing or generate new node address
     void savePacketCounterIfNeeded(); // Saves packet ID to EEPROM periodically
     void loadPacketCounter();
     void generateNodeAddress();

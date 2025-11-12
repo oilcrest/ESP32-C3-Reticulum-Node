@@ -65,8 +65,15 @@ To receive packets *from* the gateway via KISS:
 ### Hardware Requirements
 
 **Important:** You need a USB-to-serial adapter connected to the ESP32's Serial2 pins:
-* **TX (Pin 16)** on ESP32 → RX on adapter
-* **RX (Pin 17)** on ESP32 → TX on adapter
+
+**For ESP32-C3:**
+* **TX (Pin 19)** on ESP32-C3 → RX on adapter
+* **RX (Pin 18)** on ESP32-C3 → TX on adapter
+* Connect GND between ESP32-C3 and adapter
+
+**For standard ESP32:**
+* **TX (Pin 17)** on ESP32 → RX on adapter
+* **RX (Pin 16)** on ESP32 → TX on adapter
 * Connect GND between ESP32 and adapter
 
 This serial connection will be used for the KISS interface communication between your PC and the ESP32 gateway.

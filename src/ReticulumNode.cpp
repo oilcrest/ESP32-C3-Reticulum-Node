@@ -273,7 +273,7 @@ void ReticulumNode::processPacketForSelf(const RnsPacketInfo& packetInfo, Interf
 
     // Check for Local Command Context from Serial/BT to INITIATE reliable send
     if (packetInfo.context == RNS_CONTEXT_LOCAL_CMD &&
-       (interface == InterfaceType::SERIAL || interface == InterfaceType::BLUETOOTH))
+       (interface == InterfaceType::SERIAL_PORT || interface == InterfaceType::BLUETOOTH))
     {
         if (packetInfo.payload.size() >= RNS_ADDRESS_SIZE) { // Must have at least destination addr
             uint8_t targetDest[RNS_ADDRESS_SIZE];
