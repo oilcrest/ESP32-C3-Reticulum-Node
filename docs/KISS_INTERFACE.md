@@ -6,23 +6,59 @@ This document explains how to interact with the ESP32 Reticulum Gateway using it
 
 KISS is a simple protocol used to send datagrams (like Reticulum packets) over serial links. It handles escaping special characters to ensure packet boundaries are correctly identified.
 
+### KISS Special Characters
+
 * **`FEND` (Frame End - `0xC0`):** Marks the beginning and end of a packet frame. Multiple `FEND` bytes between packets are ignored.
 * **`FESC` (Frame Escape - `0xDB`):** Indicates that the *next* byte has a special meaning.
 * **`TFEND` (Transposed FEND - `0xDC`):** Represents a literal `0xC0` byte within the packet data. Sent as `FESC, TFEND`.
 * **`TFESC` (Transposed FESC - `0xDD`):** Represents a literal `0xDB` byte within the packet data. Sent as `FESC, TFESC`.
 
-**Sending:** To send a raw Reticulum packet *to* the gateway via KISS:
+### KISS Frame Structure
+
+A complete KISS frame has the following structure:
+
+```
+[FEND] [Command] [Escaped Data...] [FEND]
+```
+
+* **FEND (0xC0):** Frame delimiter (start and end)
+* **Command byte:** Indicates the frame type (see below)
+* **Escaped Data:** The actual packet data with special characters escaped
+* **FEND (0xC0):** Frame delimiter (end)
+
+### KISS Command Bytes
+
+The command byte immediately follows the opening FEND and indicates what type of frame it is:
+
+* **`0x00`:** Data frame (normal packet data) - **This is what we use**
+* **`0x01`-`0x0F`:** TNC configuration commands (not used by this gateway)
+
+**Example KISS frame for a data packet:**
+```
+C0 00 [escaped packet bytes] C0
+└─┘ └─┘ └──────────────────┘ └─┘
+FEND CMD  Packet data        FEND
+```
+
+### Sending Packets
+
+To send a raw Reticulum packet *to* the gateway via KISS:
+
 1.  Escape any `FEND` (`0xC0`) bytes in your packet data by replacing them with `FESC, TFEND` (`0xDB, 0xDC`).
 2.  Escape any `FESC` (`0xDB`) bytes in your packet data by replacing them with `FESC, TFESC` (`0xDB, 0xDD`).
-3.  Prepend and append an `FEND` (`0xC0`) byte to the resulting escaped data.
+3.  Build the frame: `FEND` + `0x00` (command byte) + escaped data + `FEND`.
 4.  Transmit these bytes over the serial connection (USB or Bluetooth).
 
-**Receiving:** To receive packets *from* the gateway via KISS:
+### Receiving Packets
+
+To receive packets *from* the gateway via KISS:
+
 1.  Read bytes from the serial connection.
 2.  Discard bytes until the first `FEND` is found (start of frame).
-3.  Buffer subsequent bytes.
-4.  If `FESC` is received, the *next* byte determines the actual data byte: `TFEND` becomes `FEND`, and `TFESC` becomes `FESC`. Any other byte following `FESC` is a protocol error.
-5.  If `FEND` is received, the buffered data (with escapes processed) constitutes one complete raw Reticulum packet. Start looking for the next packet.
+3.  Read the next byte (command byte) - for data frames it should be `0x00`.
+4.  Buffer subsequent bytes.
+5.  If `FESC` is received, the *next* byte determines the actual data byte: `TFEND` becomes `FEND`, and `TFESC` becomes `FESC`. Any other byte following `FESC` is a protocol error.
+6.  If `FEND` is received, the buffered data (with escapes processed) constitutes one complete raw Reticulum packet. Start looking for the next packet.
 
 ## Required Client Software
 
