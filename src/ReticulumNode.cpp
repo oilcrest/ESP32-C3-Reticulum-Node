@@ -259,6 +259,18 @@ void ReticulumNode::handleReceivedPacket(const uint8_t *packetBuffer, size_t pac
             }
         }
     }
+    // Check destination: PLAIN destination (unencrypted broadcast) - compare first 8 bytes of hash
+    else if (packetInfo.destination_type == RNS_DEST_PLAIN)
+    {
+        for (const auto& group : _subscribedGroups) {
+            // PLAIN destinations use a 16-byte hash, but we compare first 8 bytes
+            if (Utils::compareAddresses(packetInfo.destination_hash, group.data())) {
+                processPacketForSelf(packetInfo, interface);
+                isGroupMember = true; // Mark that we processed it
+                break; // Processed locally, but MUST continue to forwarding
+            }
+        }
+    }
 
     // --- 4. Forwarding Logic (If not single-addressed to self) ---
     // Forward packets that were not single-addressed to us, OR group packets
@@ -310,8 +322,8 @@ void ReticulumNode::processPacketForSelf(const RnsPacketInfo& packetInfo, Interf
     for(uint8_t byte : packetInfo.payload) { if(isprint(byte)) Serial.print((char)byte); else Serial.print('.'); }
     Serial.println("]");
 
-    // If app handler registered, maybe pass unreliable data too? Optional.
-    // if (_appDataHandler) { _appDataHandler(packetInfo.source, packetInfo.payload); }
+    // Call app handler for unreliable data too
+    if (_appDataHandler) { _appDataHandler(packetInfo.source, packetInfo.payload); }
 }
 
 // Handles forwarding of "normal" data packets

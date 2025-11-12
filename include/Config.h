@@ -68,6 +68,10 @@ const size_t MAX_RECENT_ANNOUNCES = 40; // Max announce IDs to remember for loop
 const std::vector<std::array<uint8_t, RNS_ADDRESS_SIZE>> SUBSCRIBED_GROUPS = {
     // {0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x01}, // Example Group 1
     // {0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34, 0x56, 0x78}  // Example Group 2
+    // Destination hash for PLAIN destination ["esp32", "node"] - calculated by tests/read_from_reticulum.py
+    // This allows the ESP32 to receive messages sent to this destination
+    {0xB6, 0x01, 0x0E, 0xA1, 0x1F, 0xDF, 0xC0, 0x4E} // First 8 bytes of 16-byte hash (truncated for group)
+
 };
 
 // --- Interface Identifiers ---

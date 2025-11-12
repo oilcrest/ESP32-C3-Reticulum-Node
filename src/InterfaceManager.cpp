@@ -158,6 +158,20 @@ void InterfaceManager::processBluetoothInput() {
 
 // --- KISS Packet Handling ---
 void InterfaceManager::handleKissPacket(const std::vector<uint8_t>& packetData, InterfaceType interface) {
+     // Debug: Print raw received packet
+     DebugSerial.print("[KISS] Received ");
+     DebugSerial.print(packetData.size());
+     DebugSerial.print(" bytes on interface ");
+     DebugSerial.print(static_cast<int>(interface));
+     DebugSerial.print(": ");
+     for (size_t i = 0; i < min(packetData.size(), (size_t)20); i++) {
+         if (packetData[i] < 0x10) DebugSerial.print("0");
+         DebugSerial.print(packetData[i], HEX);
+         DebugSerial.print(" ");
+     }
+     if (packetData.size() > 20) DebugSerial.print("...");
+     DebugSerial.println();
+
      if (_packetReceiver) {
          // Pass received packet up to ReticulumNode, indicate no specific sender MAC/IP/Port
          _packetReceiver(packetData.data(), packetData.size(), interface, nullptr, IPAddress(), 0);

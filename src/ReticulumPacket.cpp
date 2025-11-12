@@ -24,13 +24,21 @@ bool deserialize(const uint8_t *buffer, size_t len, RnsPacketInfo &info) {
     // Copy 16-byte destination hash
     memcpy(info.destination_hash, buffer + 2, RNS_TRUNCATED_HASHLENGTH_BYTES);
 
+    // Also populate legacy 8-byte destination field with first 8 bytes of hash
+    memcpy(info.destination, buffer + 2, RNS_ADDRESS_SIZE);
+
     info.context = buffer[18];  // After flags(1) + hops(1) + dest_hash(16)
 
     // Extract data payload (everything after context byte)
     size_t data_start = 19;
     if (len > data_start) {
         info.data.assign(buffer + data_start, buffer + len);
+        info.payload = info.data;  // Also populate legacy payload field
     }
+
+    // Source address is not present in DATA packets (official Reticulum format)
+    // It would only be added by transport nodes (Header 2), which we don't handle yet
+    memset(info.source, 0, RNS_ADDRESS_SIZE);
 
     info.packet_len = len;
     info.valid = true;
