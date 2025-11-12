@@ -45,7 +45,7 @@ void KISSProcessor::decodeByte(uint8_t byte, InterfaceType interface) {
             byte = KISS_FESC; // Store unescaped byte
         } else {
              // Protocol error: FESC followed by invalid byte
-             Serial.print("! KISS Decode Error: Invalid escape sequence on interface "); Serial.println(static_cast<int>(interface));
+             DebugSerial.print("! KISS Decode Error: Invalid escape sequence on interface "); DebugSerial.println(static_cast<int>(interface));
              _receiveBuffer.clear(); // Discard partial packet
              _inEscapeState = false; // Reset escape state
              _expectingCommand = true; // Reset to expecting command
@@ -64,7 +64,7 @@ void KISSProcessor::decodeByte(uint8_t byte, InterfaceType interface) {
         _receiveBuffer.push_back(byte);
     } else {
         // Buffer overflow
-        Serial.print("! KISS Decode Error: Packet buffer overflow on interface "); Serial.println(static_cast<int>(interface));
+        DebugSerial.print("! KISS Decode Error: Packet buffer overflow on interface "); DebugSerial.println(static_cast<int>(interface));
         _receiveBuffer.clear(); // Discard oversized packet
         _inEscapeState = false; // Reset escape state
         _expectingCommand = true; // Reset to expecting command

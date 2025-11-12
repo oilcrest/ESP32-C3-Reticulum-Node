@@ -194,7 +194,7 @@ void InterfaceManager::sendPacket(const uint8_t *packetBuffer, size_t packetLen,
         }
     } else {
         // No route, broadcast on primary interfaces (excluding source)
-        // Serial.print("Broadcasting packet (no route found) for dest: "); Utils::printBytes(destinationAddr, RNS_ADDRESS_SIZE, Serial); Serial.println(); // Verbose
+        // DebugSerial.print("Broadcasting packet (no route found) for dest: "); Utils::printBytes(destinationAddr, RNS_ADDRESS_SIZE, Serial); DebugSerial.println(); // Verbose
         if (excludeInterface != InterfaceType::ESP_NOW) {
             sendPacketViaEspNow(packetBuffer, packetLen, nullptr); // Broadcast = null dest for internal func
         }
@@ -276,6 +276,7 @@ void InterfaceManager::sendPacketViaWiFi(const uint8_t *packetBuffer, size_t pac
     if (!_udp.endPacket()) { DebugSerial.println("! ERROR: UDP endPacket failed!"); }
 }
 
+// KISS interface sends packaets over dedicated serial link
 void InterfaceManager::sendPacketViaSerial(const uint8_t *packetBuffer, size_t packetLen) {
     std::vector<uint8_t> kissEncoded;
     KISSProcessor::encode(packetBuffer, packetLen, kissEncoded);
@@ -287,7 +288,7 @@ void InterfaceManager::sendPacketViaBluetooth(const uint8_t *packetBuffer, size_
     std::vector<uint8_t> kissEncoded;
     KISSProcessor::encode(packetBuffer, packetLen, kissEncoded);
     size_t sent = _serialBT.write(kissEncoded.data(), kissEncoded.size());
-     // if(sent != kissEncoded.size()) { Serial.println("! WARN: Bluetooth write incomplete"); } // Optional check
+     // if(sent != kissEncoded.size()) { DebugSerial.println("! WARN: Bluetooth write incomplete"); } // Optional check
 }
 
 // --- ESP-NOW Peer Management ---
@@ -348,7 +349,7 @@ void InterfaceManager::staticEspNowRecvCallback(const uint8_t *mac_addr, const u
 void InterfaceManager::staticEspNowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status) {
     if (_instance && mac_addr) {
         // Could notify routing table or link manager about send status
-        // Serial.print("IF: ESP-NOW Send Status to MAC "); Utils::printBytes(mac_addr, 6, Serial); Serial.print(": "); Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+        // DebugSerial.print("IF: ESP-NOW Send Status to MAC "); Utils::printBytes(mac_addr, 6, Serial); DebugSerial.print(": "); DebugSerial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
     }
 }
 */
