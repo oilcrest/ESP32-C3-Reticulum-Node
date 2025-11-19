@@ -2,8 +2,12 @@
 #include "Config.h"
 #include "Utils.h"
 #include "RoutingTable.h" // Need full definition now for RouteEntry
+#include "ReticulumPacket.h" // For MAX_PACKET_SIZE
 #include <WiFi.h>
 #include <esp_wifi.h> // For esp_wifi_set_ps
+
+// ESP-NOW broadcast MAC address (FF:FF:FF:FF:FF:FF)
+static const uint8_t espnow_broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Define static instance pointer
 InterfaceManager* InterfaceManager::_instance = nullptr;
@@ -17,7 +21,7 @@ InterfaceManager::InterfaceManager(PacketReceiverCallback receiver, RoutingTable
 {
     if (_instance != nullptr) {
          // This should not happen if InterfaceManager is instantiated only once by ReticulumNode
-         Serial.println("! FATAL: Multiple InterfaceManager instances detected!");
+         DebugSerial.println("! FATAL: Multiple InterfaceManager instances detected!");
          // Handle error: abort?
          return;
     }
@@ -26,11 +30,18 @@ InterfaceManager::InterfaceManager(PacketReceiverCallback receiver, RoutingTable
 
 void InterfaceManager::setup() {
     setupSerial(); // Assumes Serial.begin() already called
+    
+    // Initialize Bluetooth first
+    setupBluetooth();
+    
+    // Configure WiFi power save mode BEFORE initializing WiFi
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);  // Use minimum power save mode when both BT and WiFi are active
+    
+    // Now setup WiFi and ESP-NOW
     setupWiFi();   // Sets mode, connects, starts UDP
     setupESPNow(); // Depends on WiFi mode being set
-    setupBluetooth();
-    esp_wifi_set_ps(WIFI_PS_NONE); // Disable WiFi power saving for potentially better responsiveness
-    Serial.println("Interface Manager Setup Complete.");
+    
+    DebugSerial.println("Interface Manager Setup Complete.");
 }
 
 void InterfaceManager::loop() {
@@ -45,57 +56,66 @@ void InterfaceManager::loop() {
 }
 
 void InterfaceManager::setupSerial() {
-    // Serial Monitor is usually started in main.cpp for early debugging
-    Serial.println("IF: Serial interface ready.");
+    // KissSerial (Serial2) is started in main.cpp for KISS interface
+    DebugSerial.println("IF: KISS Serial interface ready on Serial2 (GPIO16/17).");
 }
 
 void InterfaceManager::setupWiFi() {
+    WiFi.disconnect(true);  // Disconnect and turn off WiFi
+    WiFi.mode(WIFI_OFF);   // Ensure WiFi is off before reconfiguring
+    delay(100);            // Small delay to ensure WiFi is fully off
+    
     WiFi.mode(WIFI_AP_STA); // ESP-NOW needs STA or AP mode active
+    
+    // Set WiFi to use reduced power mode when BT is active
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    Serial.print("IF: Connecting to WiFi ");
+    DebugSerial.print("IF: Connecting to WiFi ");
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500); Serial.print("."); attempts++;
+        delay(500); DebugSerial.print("."); attempts++;
     }
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nIF: WiFi connected.");
-        Serial.print("IF: IP address: "); Serial.println(WiFi.localIP());
+        DebugSerial.println("\nIF: WiFi connected.");
+        DebugSerial.print("IF: IP address: "); DebugSerial.println(WiFi.localIP());
         if (_udp.begin(RNS_UDP_PORT)) {
-            Serial.print("IF: UDP Listening on port "); Serial.println(RNS_UDP_PORT);
+            DebugSerial.print("IF: UDP Listening on port "); DebugSerial.println(RNS_UDP_PORT);
         } else {
-            Serial.println("! ERROR: Failed to start UDP listener!");
+            DebugSerial.println("! ERROR: Failed to start UDP listener!");
         }
     } else {
-        Serial.println("\n! IF: WiFi connection failed.");
+        DebugSerial.println("\n! IF: WiFi connection failed.");
         // Node might operate without WiFi, but UDP interface won't work
     }
 }
 
 void InterfaceManager::setupESPNow() {
-     Serial.print("IF: Device MAC: "); Serial.println(WiFi.macAddress());
+     DebugSerial.print("IF: Device MAC: "); DebugSerial.println(WiFi.macAddress());
     if (esp_now_init() != ESP_OK) {
-        Serial.println("! ERROR: Initializing ESP-NOW failed!");
+        DebugSerial.println("! ERROR: Initializing ESP-NOW failed!");
         return; // Cannot proceed with ESP-NOW
     }
     // Register static callback function which calls instance method
     esp_err_t result = esp_now_register_recv_cb(staticEspNowRecvCallback);
     if (result != ESP_OK) {
-         Serial.print("! ERROR: Failed to register ESP-NOW recv cb: "); Serial.println(esp_err_to_name(result));
+         DebugSerial.print("! ERROR: Failed to register ESP-NOW recv cb: "); DebugSerial.println(esp_err_to_name(result));
     }
     // esp_now_register_send_cb(staticEspNowSendCallback); // Optional: register send status callback
 
     // Add broadcast peer initially (needed to receive broadcasts)
     if (!addEspNowPeer(espnow_broadcast_mac)) {
-         Serial.println("! WARN: Failed to add initial ESP-NOW broadcast peer");
+         DebugSerial.println("! WARN: Failed to add initial ESP-NOW broadcast peer");
     }
-    Serial.println("IF: ESP-NOW Initialized.");
+    DebugSerial.println("IF: ESP-NOW Initialized.");
 }
 
 void InterfaceManager::setupBluetooth() {
      if (!_serialBT.begin(BT_DEVICE_NAME)) {
-         Serial.println("! ERROR: Bluetooth Serial initialization failed!");
+         DebugSerial.println("! ERROR: Bluetooth Serial initialization failed!");
      } else {
-        Serial.println("IF: Bluetooth ready. Device Name: " BT_DEVICE_NAME);
+        DebugSerial.print("IF: Bluetooth ready. Device Name: ");
+        DebugSerial.println(BT_DEVICE_NAME);
     }
 }
 
@@ -104,7 +124,7 @@ void InterfaceManager::processWiFiInput() {
     int packetSize = _udp.parsePacket();
     if (packetSize > 0) {
         if (packetSize > MAX_PACKET_SIZE) {
-             Serial.print("! WARN: Oversized UDP packet received ("); Serial.print(packetSize); Serial.println(" bytes), discarding.");
+             DebugSerial.print("! WARN: Oversized UDP packet received ("); DebugSerial.print(packetSize); DebugSerial.println(" bytes), discarding.");
              _udp.flush(); // Discard data
              return;
         }
@@ -112,7 +132,7 @@ void InterfaceManager::processWiFiInput() {
         // Use unique_ptr for automatic memory management
         std::unique_ptr<uint8_t[]> udpBuffer(new (std::nothrow) uint8_t[packetSize]);
         if (!udpBuffer) {
-             Serial.println("! ERROR: new failed for UDP buffer!");
+             DebugSerial.println("! ERROR: new failed for UDP buffer!");
              _udp.flush();
              return;
         }
@@ -125,8 +145,8 @@ void InterfaceManager::processWiFiInput() {
 }
 
 void InterfaceManager::processSerialInput() {
-     while (Serial.available()) {
-        _serialKissProcessor.decodeByte(Serial.read(), InterfaceType::SERIAL);
+     while (KissSerial.available()) {
+        _serialKissProcessor.decodeByte(KissSerial.read(), InterfaceType::SERIAL_PORT);
     }
 }
 
@@ -138,6 +158,20 @@ void InterfaceManager::processBluetoothInput() {
 
 // --- KISS Packet Handling ---
 void InterfaceManager::handleKissPacket(const std::vector<uint8_t>& packetData, InterfaceType interface) {
+     // Debug: Print raw received packet
+     DebugSerial.print("[KISS] Received ");
+     DebugSerial.print(packetData.size());
+     DebugSerial.print(" bytes on interface ");
+     DebugSerial.print(static_cast<int>(interface));
+     DebugSerial.print(": ");
+     for (size_t i = 0; i < min(packetData.size(), (size_t)20); i++) {
+         if (packetData[i] < 0x10) DebugSerial.print("0");
+         DebugSerial.print(packetData[i], HEX);
+         DebugSerial.print(" ");
+     }
+     if (packetData.size() > 20) DebugSerial.print("...");
+     DebugSerial.println();
+
      if (_packetReceiver) {
          // Pass received packet up to ReticulumNode, indicate no specific sender MAC/IP/Port
          _packetReceiver(packetData.data(), packetData.size(), interface, nullptr, IPAddress(), 0);
@@ -160,7 +194,7 @@ void InterfaceManager::sendPacket(const uint8_t *packetBuffer, size_t packetLen,
         }
     } else {
         // No route, broadcast on primary interfaces (excluding source)
-        // Serial.print("Broadcasting packet (no route found) for dest: "); Utils::printBytes(destinationAddr, RNS_ADDRESS_SIZE, Serial); Serial.println(); // Verbose
+        // DebugSerial.print("Broadcasting packet (no route found) for dest: "); Utils::printBytes(destinationAddr, RNS_ADDRESS_SIZE, Serial); DebugSerial.println(); // Verbose
         if (excludeInterface != InterfaceType::ESP_NOW) {
             sendPacketViaEspNow(packetBuffer, packetLen, nullptr); // Broadcast = null dest for internal func
         }
@@ -168,7 +202,7 @@ void InterfaceManager::sendPacket(const uint8_t *packetBuffer, size_t packetLen,
              sendPacketViaWiFi(packetBuffer, packetLen, nullptr); // Broadcast = null dest for internal func
         }
         // Broadcast on Serial/BT usually only for specific bridging applications, skip by default
-        // if (excludeInterface != InterfaceType::SERIAL) { sendPacketViaSerial(packetBuffer, packetLen); }
+        // if (excludeInterface != InterfaceType::SERIAL_PORT) { sendPacketViaSerial(packetBuffer, packetLen); }
         // if (_serialBT.connected() && excludeInterface != InterfaceType::BLUETOOTH) { sendPacketViaBluetooth(packetBuffer, packetLen); }
     }
 }
@@ -178,9 +212,9 @@ void InterfaceManager::sendPacketVia(InterfaceType ifType, const uint8_t *packet
      switch(ifType) {
         case InterfaceType::ESP_NOW:  sendPacketViaEspNow(packetBuffer, packetLen, destinationAddr); break;
         case InterfaceType::WIFI_UDP: sendPacketViaWiFi(packetBuffer, packetLen, destinationAddr); break;
-        case InterfaceType::SERIAL:   sendPacketViaSerial(packetBuffer, packetLen); break;
+        case InterfaceType::SERIAL_PORT:   sendPacketViaSerial(packetBuffer, packetLen); break;
         case InterfaceType::BLUETOOTH:sendPacketViaBluetooth(packetBuffer, packetLen); break;
-        default: Serial.print("! WARN: sendPacketVia unsupported interface: "); Serial.println(static_cast<int>(ifType)); break;
+        default: DebugSerial.print("! WARN: sendPacketVia unsupported interface: "); DebugSerial.println(static_cast<int>(ifType)); break;
      }
 }
 
@@ -212,7 +246,7 @@ void InterfaceManager::sendPacketViaEspNow(const uint8_t *packetBuffer, size_t p
     } // else: destinationAddr is null -> use broadcastMac
 
     esp_err_t result = esp_now_send(targetMac, packetBuffer, packetLen);
-    if (result != ESP_OK) { Serial.print("! ESP-NOW Send Error to "); Utils::printBytes(targetMac, 6, Serial); Serial.print(": "); Serial.println(esp_err_to_name(result)); }
+    if (result != ESP_OK) { DebugSerial.print("! ESP-NOW Send Error to "); Utils::printBytes(targetMac, 6, DebugSerial); DebugSerial.print(": "); DebugSerial.println(esp_err_to_name(result)); }
 }
 
 void InterfaceManager::sendPacketViaWiFi(const uint8_t *packetBuffer, size_t packetLen, const uint8_t *destinationAddr) {
@@ -232,28 +266,29 @@ void InterfaceManager::sendPacketViaWiFi(const uint8_t *packetBuffer, size_t pac
      } // else: destinationAddr is null -> use broadcast IP
 
     if (!targetIp || targetIp == INADDR_NONE) {
-        Serial.println("! WARN: UDP Target IP is invalid, cannot send.");
+        DebugSerial.println("! WARN: UDP Target IP is invalid, cannot send.");
         return;
     }
 
     _udp.beginPacket(targetIp, targetPort);
     size_t sent = _udp.write(packetBuffer, packetLen);
-    if (sent != packetLen) { Serial.print("! WARN: UDP write incomplete (sent "); Serial.print(sent); Serial.print("/"); Serial.print(packetLen); Serial.println(" bytes)"); }
-    if (!_udp.endPacket()) { Serial.println("! ERROR: UDP endPacket failed!"); }
+    if (sent != packetLen) { DebugSerial.print("! WARN: UDP write incomplete (sent "); DebugSerial.print(sent); DebugSerial.print("/"); DebugSerial.print(packetLen); DebugSerial.println(" bytes)"); }
+    if (!_udp.endPacket()) { DebugSerial.println("! ERROR: UDP endPacket failed!"); }
 }
 
+// KISS interface sends packaets over dedicated serial link
 void InterfaceManager::sendPacketViaSerial(const uint8_t *packetBuffer, size_t packetLen) {
     std::vector<uint8_t> kissEncoded;
     KISSProcessor::encode(packetBuffer, packetLen, kissEncoded);
-    size_t sent = Serial.write(kissEncoded.data(), kissEncoded.size());
-    // if(sent != kissEncoded.size()) { Serial.println("! WARN: Serial write incomplete"); } // Optional check
+    size_t sent = KissSerial.write(kissEncoded.data(), kissEncoded.size());
+    // if(sent != kissEncoded.size()) { DebugSerial.println("! WARN: Serial write incomplete"); } // Optional check
 }
 void InterfaceManager::sendPacketViaBluetooth(const uint8_t *packetBuffer, size_t packetLen) {
     if (!_serialBT.connected()) return;
     std::vector<uint8_t> kissEncoded;
     KISSProcessor::encode(packetBuffer, packetLen, kissEncoded);
     size_t sent = _serialBT.write(kissEncoded.data(), kissEncoded.size());
-     // if(sent != kissEncoded.size()) { Serial.println("! WARN: Bluetooth write incomplete"); } // Optional check
+     // if(sent != kissEncoded.size()) { DebugSerial.println("! WARN: Bluetooth write incomplete"); } // Optional check
 }
 
 // --- ESP-NOW Peer Management ---
@@ -268,10 +303,10 @@ bool InterfaceManager::addEspNowPeer(const uint8_t* mac_addr) {
     // peerInfo.ifidx = WIFI_IF_STA; // Use station interface? Or AP? Test which works best. WIFI_IF_AP might also be needed.
     esp_err_t add_result = esp_now_add_peer(&peerInfo);
     if (add_result != ESP_OK) {
-         Serial.print("! ERROR: Failed to add ESP-NOW peer "); Utils::printBytes(mac_addr, 6, Serial); Serial.print(": "); Serial.println(esp_err_to_name(add_result));
+         DebugSerial.print("! ERROR: Failed to add ESP-NOW peer "); Utils::printBytes(mac_addr, 6, DebugSerial); DebugSerial.print(": "); DebugSerial.println(esp_err_to_name(add_result));
          return false;
     }
-    Serial.print("IF: Added ESP-NOW peer: "); Utils::printBytes(mac_addr, 6, Serial); Serial.println();
+    DebugSerial.print("IF: Added ESP-NOW peer: "); Utils::printBytes(mac_addr, 6, DebugSerial); DebugSerial.println();
     return true;
 }
 
@@ -281,10 +316,10 @@ bool InterfaceManager::removeEspNowPeer(const uint8_t* mac_addr) {
 
      esp_err_t del_result = esp_now_del_peer(mac_addr);
      if (del_result != ESP_OK) {
-         Serial.print("! WARN: Failed to delete ESP-NOW peer "); Utils::printBytes(mac_addr, 6, Serial); Serial.print(": "); Serial.println(esp_err_to_name(del_result));
+         DebugSerial.print("! WARN: Failed to delete ESP-NOW peer "); Utils::printBytes(mac_addr, 6, DebugSerial); DebugSerial.print(": "); DebugSerial.println(esp_err_to_name(del_result));
          return false;
      }
-     Serial.print("IF: Removed ESP-NOW peer: "); Utils::printBytes(mac_addr, 6, Serial); Serial.println();
+     DebugSerial.print("IF: Removed ESP-NOW peer: "); Utils::printBytes(mac_addr, 6, DebugSerial); DebugSerial.println();
      return true;
 }
 
@@ -305,7 +340,7 @@ void InterfaceManager::staticEspNowRecvCallback(const uint8_t *mac_addr, const u
              // Pass to instance's packet receiver callback
             _instance->_packetReceiver(incomingData, (size_t)len, InterfaceType::ESP_NOW, mac_addr, IPAddress(), 0);
         } else {
-             Serial.print("! WARN: Oversized ESP-NOW packet received ("); Serial.print(len); Serial.println(" bytes), discarding.");
+             DebugSerial.print("! WARN: Oversized ESP-NOW packet received ("); DebugSerial.print(len); DebugSerial.println(" bytes), discarding.");
         }
     }
 }
@@ -314,7 +349,7 @@ void InterfaceManager::staticEspNowRecvCallback(const uint8_t *mac_addr, const u
 void InterfaceManager::staticEspNowSendCallback(const uint8_t *mac_addr, esp_now_send_status_t status) {
     if (_instance && mac_addr) {
         // Could notify routing table or link manager about send status
-        // Serial.print("IF: ESP-NOW Send Status to MAC "); Utils::printBytes(mac_addr, 6, Serial); Serial.print(": "); Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
+        // DebugSerial.print("IF: ESP-NOW Send Status to MAC "); Utils::printBytes(mac_addr, 6, Serial); DebugSerial.print(": "); DebugSerial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Fail");
     }
 }
 */

@@ -10,7 +10,7 @@ LinkManager::LinkManager(ReticulumNode& owner) : _ownerRef(owner) {}
 // Get existing link or create if possible
 LinkManager::LinkPtr LinkManager::getOrCreateLink(const uint8_t* destination, bool create) {
     if (!destination) {
-        Serial.println("! LinkManager::getOrCreateLink: Null destination provided.");
+        DebugSerial.println("! LinkManager::getOrCreateLink: Null destination provided.");
         return nullptr;
     }
     std::array<uint8_t, RNS_ADDRESS_SIZE> destArray;
@@ -23,12 +23,12 @@ LinkManager::LinkPtr LinkManager::getOrCreateLink(const uint8_t* destination, bo
         return it->second;
     } else if (create && _activeLinks.size() < LINK_MAX_ACTIVE) {
         // Create new link if allowed and space available
-        Serial.print("LinkManager: Creating new Link object for "); Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); Serial.println();
+        DebugSerial.print("LinkManager: Creating new Link object for "); Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
         try {
              // Use 'new (std::nothrow)' for slightly safer allocation check than make_shared exception
              // Link* rawPtr = new (std::nothrow) Link(destination, *this);
              // if (!rawPtr) {
-             //      Serial.println("! ERROR: Failed to allocate memory for new Link!");
+             //      DebugSerial.println("! ERROR: Failed to allocate memory for new Link!");
              //      return nullptr;
              // }
              // LinkPtr newLink(rawPtr); // Wrap in shared_ptr
@@ -39,15 +39,15 @@ LinkManager::LinkPtr LinkManager::getOrCreateLink(const uint8_t* destination, bo
              _activeLinks[destArray] = newLink; // Add to map
              return newLink;
         } catch (const std::bad_alloc& e) {
-             Serial.println("! ERROR: std::bad_alloc creating new Link!");
+             DebugSerial.println("! ERROR: std::bad_alloc creating new Link!");
              return nullptr;
         } catch (...) {
-             Serial.println("! ERROR: Unknown exception creating new Link!");
+             DebugSerial.println("! ERROR: Unknown exception creating new Link!");
              return nullptr;
         }
     } else if (create) {
-         Serial.print("! WARN: Max active links ("); Serial.print(LINK_MAX_ACTIVE); Serial.print(") reached. Cannot create new link to ");
-         Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); Serial.println();
+         DebugSerial.print("! WARN: Max active links ("); DebugSerial.print(LINK_MAX_ACTIVE); DebugSerial.print(") reached. Cannot create new link to ");
+         Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
     }
     return nullptr; // Not found and not created
 }
@@ -63,7 +63,7 @@ void LinkManager::processPacket(const RnsPacketInfo& packetInfo, InterfaceType i
     } else {
          // If it wasn't a LINK_REQ or we couldn't create a link (e.g., max links reached), ignore it.
          if (packetInfo.context != RNS_CONTEXT_LINK_REQ) {
-            Serial.print("! LinkManager: Received non-REQ Link packet for unknown/uncreatable source: "); Utils::printBytes(packetInfo.source, RNS_ADDRESS_SIZE, Serial); Serial.println();
+            DebugSerial.print("! LinkManager: Received non-REQ Link packet for unknown/uncreatable source: "); Utils::printBytes(packetInfo.source, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
          }
     }
 }
@@ -72,20 +72,20 @@ void LinkManager::processPacket(const RnsPacketInfo& packetInfo, InterfaceType i
 bool LinkManager::sendReliableData(const uint8_t* destination, const std::vector<uint8_t>& payload) {
     LinkPtr link = getOrCreateLink(destination, true); // Get or create link
     if (!link) {
-         Serial.println("! LinkManager::sendReliableData failed: Cannot get/create Link.");
+         DebugSerial.println("! LinkManager::sendReliableData failed: Cannot get/create Link.");
          return false;
     }
 
     // If link is closed, try establishing it first
     if (!link->isActive()) { // Checks if state == CLOSED
-        Serial.println("LinkManager::sendReliableData: Link is inactive, attempting establishment.");
+        DebugSerial.println("LinkManager::sendReliableData: Link is inactive, attempting establishment.");
         if (!link->establish()) {
              // Establish might fail if state wasn't CLOSED or serialize failed
-             Serial.println("! ERROR: LinkManager::sendReliableData failed to initiate link establishment.");
+             DebugSerial.println("! ERROR: LinkManager::sendReliableData failed to initiate link establishment.");
              // Maybe remove the failed link attempt? Let prune handle it.
              return false;
         }
-         Serial.println("Link establishment initiated. Try sending data again after ESTABLISHED.");
+         DebugSerial.println("Link establishment initiated. Try sending data again after ESTABLISHED.");
          return false; // Indicate send didn't happen now
     }
 
@@ -94,7 +94,7 @@ bool LinkManager::sendReliableData(const uint8_t* destination, const std::vector
         return link->sendData(payload); // Returns true if send attempt initiated
     } else {
         // Link is pending or closing, cannot send data now
-        Serial.println("! LinkManager::sendReliableData failed: Link not established yet (pending/closing).");
+        DebugSerial.println("! LinkManager::sendReliableData failed: Link not established yet (pending/closing).");
         return false;
     }
 }
@@ -116,10 +116,10 @@ void LinkManager::pruneInactiveLinks() {
      for (auto it = _activeLinks.begin(); it != _activeLinks.end(); /* manual increment */ ) {
          bool remove_it = false;
          if (!it->second->isActive()) { // Check if state is CLOSED
-              // Serial.print("Pruning explicitly closed link: "); Utils::printBytes(it->first.data(), RNS_ADDRESS_SIZE, Serial); Serial.println(); // Verbose
+              // DebugSerial.print("Pruning explicitly closed link: "); Utils::printBytes(it->first.data(), RNS_ADDRESS_SIZE, Serial); DebugSerial.println(); // Verbose
               remove_it = true;
          } else if (now - it->second->getLastActivityTime() > LINK_INACTIVITY_TIMEOUT_MS) {
-              Serial.print("! Link Inactivity timeout: "); Utils::printBytes(it->first.data(), RNS_ADDRESS_SIZE, Serial); Serial.println();
+              DebugSerial.print("! Link Inactivity timeout: "); Utils::printBytes(it->first.data(), RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
               it->second->teardown(); // Set state to CLOSED, doesn't remove from map directly
               remove_it = true; // Mark for removal
          }
@@ -141,12 +141,12 @@ void LinkManager::removeLink(const uint8_t* destination) {
 
      auto it = _activeLinks.find(destArray);
      if (it != _activeLinks.end()) {
-          Serial.print("LinkManager removing link: "); Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); Serial.println();
+          DebugSerial.print("LinkManager removing link: "); Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
           // Set state to closed just in case before erasing
           it->second->teardown(); // Ensure state is CLOSED
           _activeLinks.erase(it);
      } else {
-         // Serial.print("LinkManager removeLink: Link not found for "); Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); Serial.println(); // Verbose
+         // DebugSerial.print("LinkManager removeLink: Link not found for "); Utils::printBytes(destination, RNS_ADDRESS_SIZE, Serial); DebugSerial.println(); // Verbose
      }
 }
 

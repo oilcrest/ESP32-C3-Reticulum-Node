@@ -1,10 +1,12 @@
 #include "KISS.h"
-#include "Config.h"   // For MAX_PACKET_SIZE
+#include "Config.h"   // For InterfaceType
+#include "ReticulumPacket.h" // For MAX_PACKET_SIZE
 #include <Arduino.h> // For Serial debug
 
 KISSProcessor::KISSProcessor(PacketHandler handler) :
     _packetHandler(handler),
-    _inEscapeState(false)
+    _inEscapeState(false),
+    _expectingCommand(true)  // Start expecting command byte after first FEND
 {
      // Reserve some buffer space upfront if desired
      // _receiveBuffer.reserve(MAX_PACKET_SIZE / 2);
@@ -22,7 +24,17 @@ void KISSProcessor::decodeByte(uint8_t byte, InterfaceType interface) {
         }
         // Ignore FEND if buffer is empty (start padding or multiple FENDs)
         _inEscapeState = false; // Reset escape state on FEND
+        _expectingCommand = true; // Next non-FEND byte will be command byte
         return; // Done processing this FEND byte
+    }
+
+    // Handle KISS command byte (comes after FEND, before data)
+    if (_expectingCommand) {
+        _expectingCommand = false;
+        // Command byte: 0x00 = data frame (the only one we care about)
+        // We just skip it and don't store it in the buffer
+        // Other commands (0x01-0x0F) are for TNC configuration - ignore them too
+        return;
     }
 
     // Handle escape sequences
@@ -33,9 +45,10 @@ void KISSProcessor::decodeByte(uint8_t byte, InterfaceType interface) {
             byte = KISS_FESC; // Store unescaped byte
         } else {
              // Protocol error: FESC followed by invalid byte
-             Serial.print("! KISS Decode Error: Invalid escape sequence on interface "); Serial.println(static_cast<int>(interface));
+             DebugSerial.print("! KISS Decode Error: Invalid escape sequence on interface "); DebugSerial.println(static_cast<int>(interface));
              _receiveBuffer.clear(); // Discard partial packet
              _inEscapeState = false; // Reset escape state
+             _expectingCommand = true; // Reset to expecting command
              return; // Discard this byte too
         }
         _inEscapeState = false; // Handled escape sequence
@@ -51,9 +64,10 @@ void KISSProcessor::decodeByte(uint8_t byte, InterfaceType interface) {
         _receiveBuffer.push_back(byte);
     } else {
         // Buffer overflow
-        Serial.print("! KISS Decode Error: Packet buffer overflow on interface "); Serial.println(static_cast<int>(interface));
+        DebugSerial.print("! KISS Decode Error: Packet buffer overflow on interface "); DebugSerial.println(static_cast<int>(interface));
         _receiveBuffer.clear(); // Discard oversized packet
         _inEscapeState = false; // Reset escape state
+        _expectingCommand = true; // Reset to expecting command
         // If overflow occurs, the current packet is lost. FEND will reset.
     }
 }
@@ -64,6 +78,7 @@ void KISSProcessor::encode(const uint8_t *input, size_t len, std::vector<uint8_t
     output.clear();
     // output.reserve(len + 2 + (len / 50)); // Pre-allocate heuristic
     output.push_back(KISS_FEND); // Start with FEND is recommended by some KISS variants
+    output.push_back(0x00);      // Command byte: 0x00 = data frame (REQUIRED by KISS protocol)
 
     for (size_t i = 0; i < len; ++i) {
         if (input[i] == KISS_FEND) {

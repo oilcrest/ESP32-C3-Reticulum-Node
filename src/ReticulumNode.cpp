@@ -41,7 +41,7 @@ void ReticulumNode::setup() {
     // Ensure routing table prune timer is initialized
     _routingTable.prune(nullptr); // Initial call to set timer base
 
-    Serial.print("Node Setup Complete. Free Heap: "); Serial.println(ESP.getFreeHeap());
+    DebugSerial.print("Node Setup Complete. Free Heap: "); DebugSerial.println(ESP.getFreeHeap());
 }
 
 void ReticulumNode::loop() {
@@ -59,12 +59,12 @@ void ReticulumNode::loop() {
 // --- Config Loading/Saving ---
 void ReticulumNode::loadConfig() {
     if (!EEPROM.begin(EEPROM_SIZE)) {
-        Serial.println("! ERROR: Failed to initialise EEPROM! Using temporary values.");
+        DebugSerial.println("! ERROR: Failed to initialise EEPROM! Using temporary values.");
         generateNodeAddress(); // Generate temp address
         _packetCounter = random(0,0xFFFF); // Start with random counter
         return;
     }
-    Serial.println("Loading config from EEPROM...");
+    DebugSerial.println("Loading config from EEPROM...");
     loadOrGenerateAddress(); // Load or generate node address
     loadPacketCounter(); // Load last packet counter
     // EEPROM.end(); // Optional: close EEPROM if not needed constantly
@@ -85,7 +85,7 @@ void ReticulumNode::loadOrGenerateAddress() {
     }
     if (allZeros || allFs) {
         needsGenerating = true;
-        Serial.println("No valid address in EEPROM or first boot.");
+        DebugSerial.println("No valid address in EEPROM or first boot.");
     }
 
     if (needsGenerating) {
@@ -93,12 +93,12 @@ void ReticulumNode::loadOrGenerateAddress() {
         saveNodeAddress();
     } else {
         memcpy(_nodeAddress, storedAddr, RNS_ADDRESS_SIZE);
-        Serial.println("Loaded address from EEPROM.");
+        DebugSerial.println("Loaded address from EEPROM.");
     }
 }
 
 void ReticulumNode::generateNodeAddress() {
-    Serial.println("Generating random node address...");
+    DebugSerial.println("Generating random node address...");
     // Ensure random is seeded reasonably well
     randomSeed(analogRead(A0) ^ millis() ^ esp_random());
     for (int i = 0; i < RNS_ADDRESS_SIZE; ++i) {
@@ -111,14 +111,14 @@ void ReticulumNode::generateNodeAddress() {
 }
 
 void ReticulumNode::saveNodeAddress() {
-     Serial.print("Saving node address to EEPROM: "); printNodeAddress(); // Print before saving
+     DebugSerial.print("Saving node address to EEPROM: "); printNodeAddress(); // Print before saving
      // EEPROM.begin required before write if not already called or ended
-     // if (!EEPROM.begin(EEPROM_SIZE)) { Serial.println("! EEPROM begin failed for save!"); return; }
+     // if (!EEPROM.begin(EEPROM_SIZE)) { DebugSerial.println("! EEPROM begin failed for save!"); return; }
     for (int i = 0; i < RNS_ADDRESS_SIZE; ++i) {
         EEPROM.write(EEPROM_ADDR_NODE + i, _nodeAddress[i]);
     }
     if (!EEPROM.commit()) {
-        Serial.println("! WARNING: EEPROM commit failed saving address!");
+        DebugSerial.println("! WARNING: EEPROM commit failed saving address!");
     }
     // EEPROM.end();
 }
@@ -126,20 +126,20 @@ void ReticulumNode::saveNodeAddress() {
 void ReticulumNode::loadPacketCounter() {
     // Manual read for compatibility:
     _packetCounter = (EEPROM.read(EEPROM_ADDR_PKTID + 0) << 8) | EEPROM.read(EEPROM_ADDR_PKTID + 1);
-    Serial.print("Loaded packet counter start: "); Serial.println(_packetCounter);
+    DebugSerial.print("Loaded packet counter start: "); DebugSerial.println(_packetCounter);
     _packetIdUnsavedCount = 0; // Reset unsaved counter
 }
 
 void ReticulumNode::savePacketCounterIfNeeded() {
     _packetIdUnsavedCount++;
     if (_packetIdUnsavedCount >= PACKET_ID_SAVE_INTERVAL) {
-         // Serial.print("Saving packet counter: "); Serial.println(_packetCounter); // Verbose
+         // DebugSerial.print("Saving packet counter: "); DebugSerial.println(_packetCounter); // Verbose
          // EEPROM.begin required before write if not already called or ended
-         // if (!EEPROM.begin(EEPROM_SIZE)) { Serial.println("! EEPROM begin failed for save!"); return; }
+         // if (!EEPROM.begin(EEPROM_SIZE)) { DebugSerial.println("! EEPROM begin failed for save!"); return; }
          EEPROM.write(EEPROM_ADDR_PKTID + 0, (_packetCounter >> 8) & 0xFF);
          EEPROM.write(EEPROM_ADDR_PKTID + 1, _packetCounter & 0xFF);
          if (!EEPROM.commit()) {
-             Serial.println("! WARNING: Failed to save packet counter!");
+             DebugSerial.println("! WARNING: Failed to save packet counter!");
          }
           // EEPROM.end();
          _packetIdUnsavedCount = 0; // Reset counter
@@ -154,20 +154,20 @@ uint16_t ReticulumNode::getNextPacketId() {
 }
 
 void ReticulumNode::printNodeAddress() {
-    Serial.print("Node Address: ");
+    DebugSerial.print("Node Address: ");
     Utils::printBytes(_nodeAddress, RNS_ADDRESS_SIZE, Serial);
-    Serial.println();
+    DebugSerial.println();
 }
 
 // --- Periodic Tasks ---
 void ReticulumNode::checkMemoryUsage() {
     unsigned long now = millis();
     if (now - _last_mem_check_time > MEM_CHECK_INTERVAL_MS) {
-        Serial.print("[Mem] Free Heap: "); Serial.print(ESP.getFreeHeap());
+        DebugSerial.print("[Mem] Free Heap: "); DebugSerial.print(ESP.getFreeHeap());
         // Add more stats if needed (e.g., Link count, Route count)
-        // Serial.print(" Links: "); Serial.print(_linkManager.getActiveLinkCount()); // Need method in LinkManager
-        // Serial.print(" Routes: "); Serial.print(_routingTable.getRouteCount()); // Need method in RoutingTable
-        Serial.println();
+        // DebugSerial.print(" Links: "); DebugSerial.print(_linkManager.getActiveLinkCount()); // Need method in LinkManager
+        // DebugSerial.print(" Routes: "); DebugSerial.print(_routingTable.getRouteCount()); // Need method in RoutingTable
+        DebugSerial.println();
         _last_mem_check_time = now;
     }
 }
@@ -176,7 +176,7 @@ void ReticulumNode::sendAnnounceIfNeeded() {
     unsigned long now = millis();
     // Check if announce interval has passed
     if (now - _last_announce_time > ANNOUNCE_INTERVAL_MS) {
-        // Serial.println("Generating Announce packet..."); // Verbose
+        // DebugSerial.println("Generating Announce packet..."); // Verbose
         RnsPacketInfo announcePkt;
         announcePkt.header_type = RNS_HEADER_TYPE_ANN;
         announcePkt.context = RNS_CONTEXT_NONE;
@@ -197,7 +197,7 @@ void ReticulumNode::sendAnnounceIfNeeded() {
         {
             _interfaceManager.broadcastAnnounce(buffer, len); // Use InterfaceManager to send
         } else {
-             Serial.println("! ERROR: Failed to serialize own Announce packet!");
+             DebugSerial.println("! ERROR: Failed to serialize own Announce packet!");
         }
         _last_announce_time = now; // Reset timer *after* sending attempt
         // _routingTable.print(); // Optional: Print table after sending announce
@@ -210,7 +210,7 @@ void ReticulumNode::handleReceivedPacket(const uint8_t *packetBuffer, size_t pac
 {
     RnsPacketInfo packetInfo;
     if (!ReticulumPacket::deserialize(packetBuffer, packetLen, packetInfo)) {
-        // Serial.println("! Deserialize failed in Node. Discarding."); // Verbose
+        // DebugSerial.println("! Deserialize failed in Node. Discarding."); // Verbose
         return;
     }
 
@@ -223,14 +223,14 @@ void ReticulumNode::handleReceivedPacket(const uint8_t *packetBuffer, size_t pac
         packetInfo.context == RNS_CONTEXT_LINK_DATA ||
         (packetInfo.header_type == RNS_HEADER_TYPE_ACK && packetInfo.context == RNS_CONTEXT_ACK) )
     {
-        // Serial.println("Node: Passing packet to Link Manager."); // Verbose
+        // DebugSerial.println("Node: Passing packet to Link Manager."); // Verbose
         _linkManager.processPacket(packetInfo, interface);
         return; // Link manager handles these exclusively
     }
 
     // --- 2. Announce Packet Handling ---
     if ((packetInfo.header_type & RNS_HEADER_TYPE_MASK) == RNS_HEADER_TYPE_ANN) {
-        // Serial.println("Node: Processing Announce..."); // Verbose
+        // DebugSerial.println("Node: Processing Announce..."); // Verbose
         _routingTable.update(packetInfo, interface, sender_mac, sender_ip, sender_port);
         forwardAnnounce(packetInfo, interface); // Attempt re-broadcast
         return; // Announce handled
@@ -259,6 +259,18 @@ void ReticulumNode::handleReceivedPacket(const uint8_t *packetBuffer, size_t pac
             }
         }
     }
+    // Check destination: PLAIN destination (unencrypted broadcast) - compare first 8 bytes of hash
+    else if (packetInfo.destination_type == RNS_DEST_PLAIN)
+    {
+        for (const auto& group : _subscribedGroups) {
+            // PLAIN destinations use a 16-byte hash, but we compare first 8 bytes
+            if (Utils::compareAddresses(packetInfo.destination_hash, group.data())) {
+                processPacketForSelf(packetInfo, interface);
+                isGroupMember = true; // Mark that we processed it
+                break; // Processed locally, but MUST continue to forwarding
+            }
+        }
+    }
 
     // --- 4. Forwarding Logic (If not single-addressed to self) ---
     // Forward packets that were not single-addressed to us, OR group packets
@@ -273,7 +285,7 @@ void ReticulumNode::processPacketForSelf(const RnsPacketInfo& packetInfo, Interf
 
     // Check for Local Command Context from Serial/BT to INITIATE reliable send
     if (packetInfo.context == RNS_CONTEXT_LOCAL_CMD &&
-       (interface == InterfaceType::SERIAL || interface == InterfaceType::BLUETOOTH))
+       (interface == InterfaceType::SERIAL_PORT || interface == InterfaceType::BLUETOOTH))
     {
         if (packetInfo.payload.size() >= RNS_ADDRESS_SIZE) { // Must have at least destination addr
             uint8_t targetDest[RNS_ADDRESS_SIZE];
@@ -285,40 +297,40 @@ void ReticulumNode::processPacketForSelf(const RnsPacketInfo& packetInfo, Interf
                  actualPayload.assign(packetInfo.payload.begin() + RNS_ADDRESS_SIZE, packetInfo.payload.end());
             } // else: payload is empty, might be a ping command?
 
-            Serial.print("> CMD: Send Reliable to "); Utils::printBytes(targetDest, RNS_ADDRESS_SIZE, Serial);
-            Serial.print(" DataLen="); Serial.println(actualPayload.size());
+            DebugSerial.print("> CMD: Send Reliable to "); Utils::printBytes(targetDest, RNS_ADDRESS_SIZE, Serial);
+            DebugSerial.print(" DataLen="); DebugSerial.println(actualPayload.size());
 
             // Initiate reliable send via LinkManager
             if (!_linkManager.sendReliableData(targetDest, actualPayload)) {
-                 Serial.println("! CMD Failed: Could not initiate reliable send.");
+                 DebugSerial.println("! CMD Failed: Could not initiate reliable send.");
                  // Optionally send failure notification back via KISS? Complex.
             }
 
         } else {
-             Serial.println("! Invalid Local Command: payload too short.");
+             DebugSerial.println("! Invalid Local Command: payload too short.");
         }
         return; // Command processed
     }
 
     // --- Standard Unreliable Packet Processing for Self ---
     // (e.g., pings, service discovery, non-link application data)
-    Serial.print("> Self Packet! Dst="); Utils::printBytes(packetInfo.destination, RNS_ADDRESS_SIZE, Serial);
-    Serial.print(" Src="); Utils::printBytes(packetInfo.source, RNS_ADDRESS_SIZE, Serial);
-    Serial.print(" If="); Serial.print(static_cast<int>(interface));
-    Serial.print(" Ctx="); Serial.print(packetInfo.context, HEX);
-    Serial.print(" Payload: [");
-    for(uint8_t byte : packetInfo.payload) { if(isprint(byte)) Serial.print((char)byte); else Serial.print('.'); }
-    Serial.println("]");
+    DebugSerial.print("> Self Packet! Dst="); Utils::printBytes(packetInfo.destination, RNS_ADDRESS_SIZE, Serial);
+    DebugSerial.print(" Src="); Utils::printBytes(packetInfo.source, RNS_ADDRESS_SIZE, Serial);
+    DebugSerial.print(" If="); DebugSerial.print(static_cast<int>(interface));
+    DebugSerial.print(" Ctx="); DebugSerial.print(packetInfo.context, HEX);
+    DebugSerial.print(" Payload: [");
+    for(uint8_t byte : packetInfo.payload) { if(isprint(byte)) DebugSerial.print((char)byte); else DebugSerial.print('.'); }
+    DebugSerial.println("]");
 
-    // If app handler registered, maybe pass unreliable data too? Optional.
-    // if (_appDataHandler) { _appDataHandler(packetInfo.source, packetInfo.payload); }
+    // Call app handler for unreliable data too
+    if (_appDataHandler) { _appDataHandler(packetInfo.source, packetInfo.payload); }
 }
 
 // Handles forwarding of "normal" data packets
 void ReticulumNode::forwardPacket(const RnsPacketInfo& packetInfo, InterfaceType incomingInterface) {
      // Check hop limit
     if (packetInfo.hops >= MAX_HOPS) {
-        // Serial.println("Hop limit exceeded. Not forwarding."); // Verbose
+        DebugSerial.println("Hop limit exceeded. Not forwarding."); // Verbose
         return;
     }
 
@@ -334,11 +346,11 @@ void ReticulumNode::forwardPacket(const RnsPacketInfo& packetInfo, InterfaceType
         forwardInfo.header_type, forwardInfo.context, forwardInfo.packet_id,
         forwardInfo.hops, forwardInfo.payload, 0)) // Pass original payload, no sequence num
     {
-        Serial.println("! ERROR: Failed to serialize packet for forwarding!");
+        DebugSerial.println("! ERROR: Failed to serialize packet for forwarding!");
         return;
     }
 
-    // Serial.print("Forwarding packet ID "); Serial.print(forwardInfo.packet_id); Serial.print(" Hops "); Serial.println(forwardInfo.hops); // Verbose
+    // DebugSerial.print("Forwarding packet ID "); DebugSerial.print(forwardInfo.packet_id); DebugSerial.print(" Hops "); DebugSerial.println(forwardInfo.hops); // Verbose
     // Use InterfaceManager to send via appropriate interfaces (routing or broadcast)
     _interfaceManager.sendPacket(forwardBuffer, forwardLen, forwardInfo.destination, incomingInterface);
 }
@@ -347,13 +359,13 @@ void ReticulumNode::forwardPacket(const RnsPacketInfo& packetInfo, InterfaceType
 void ReticulumNode::forwardAnnounce(const RnsPacketInfo& packetInfo, InterfaceType incomingInterface) {
     // Check hop limit (allow MAX_HOPS-1 for forwarding)
     if (packetInfo.hops >= MAX_HOPS -1) {
-        // Serial.println("Announce hop limit reached for forwarding."); // Verbose
+        // DebugSerial.println("Announce hop limit reached for forwarding."); // Verbose
         return;
     }
 
     // Check if this announce was recently forwarded to prevent loops/storms
     if (!_routingTable.shouldForwardAnnounce(packetInfo.packet_id, packetInfo.source)) {
-         // Serial.println("Announce recently forwarded or loop detected. Skipping re-broadcast."); // Verbose
+         // DebugSerial.println("Announce recently forwarded or loop detected. Skipping re-broadcast."); // Verbose
         return;
     }
     // Mark as forwarded BEFORE sending
@@ -371,11 +383,11 @@ void ReticulumNode::forwardAnnounce(const RnsPacketInfo& packetInfo, InterfaceTy
         forwardInfo.header_type, forwardInfo.context, forwardInfo.packet_id,
         forwardInfo.hops, forwardInfo.payload, 0))
     {
-        Serial.println("! ERROR: Failed to serialize announce for forwarding!");
+        DebugSerial.println("! ERROR: Failed to serialize announce for forwarding!");
         return;
     }
 
-    // Serial.print("Re-broadcasting Announce ID "); Serial.print(forwardInfo.packet_id); Serial.print(" Hops "); Serial.println(forwardInfo.hops); // Verbose
+    // DebugSerial.print("Re-broadcasting Announce ID "); DebugSerial.print(forwardInfo.packet_id); DebugSerial.print(" Hops "); DebugSerial.println(forwardInfo.hops); // Verbose
     // Announce should be broadcast, not routed to specific dest
     _interfaceManager.broadcastAnnounce(forwardBuffer, forwardLen);
 }
@@ -383,24 +395,24 @@ void ReticulumNode::forwardAnnounce(const RnsPacketInfo& packetInfo, InterfaceTy
 // --- Application Layer Integration ---
 void ReticulumNode::setAppDataHandler(AppDataHandler handler) {
     _appDataHandler = handler;
-    Serial.println("Application data handler registered.");
+    DebugSerial.println("Application data handler registered.");
 }
 
 // Called by LinkManager when reliable data arrives
 void ReticulumNode::processAppData(const uint8_t* source_address, const std::vector<uint8_t>& data) {
     // This is where received Link data ends up
-    Serial.print(">> App Data Received! Src: "); Utils::printBytes(source_address, RNS_ADDRESS_SIZE, Serial);
-    Serial.print(" Len: "); Serial.print(data.size()); Serial.println();
+    DebugSerial.print(">> App Data Received! Src: "); Utils::printBytes(source_address, RNS_ADDRESS_SIZE, Serial);
+    DebugSerial.print(" Len: "); DebugSerial.print(data.size()); DebugSerial.println();
 
     if (_appDataHandler) {
         try {
              _appDataHandler(source_address, data); // Call the registered handler
         } catch (const std::exception& e) {
-             Serial.print("! ERROR in AppDataHandler: "); Serial.println(e.what());
+             DebugSerial.print("! ERROR in AppDataHandler: "); DebugSerial.println(e.what());
         } catch (...) {
-             Serial.println("! ERROR in AppDataHandler: Unknown exception.");
+             DebugSerial.println("! ERROR in AppDataHandler: Unknown exception.");
         }
     } else {
-        Serial.println(" (No AppDataHandler registered)");
+        DebugSerial.println(" (No AppDataHandler registered)");
     }
 }

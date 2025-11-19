@@ -48,7 +48,7 @@ void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType int
     // If not found, add new route if space allows
     if (!found) {
         if (_routes.size() < MAX_ROUTES) {
-            // Serial.print("RT: Adding new route for "); Utils::printBytes(announcePacket.source, RNS_ADDRESS_SIZE, Serial); // Verbose
+            // DebugSerial.print("RT: Adding new route for "); Utils::printBytes(announcePacket.source, RNS_ADDRESS_SIZE, Serial); // Verbose
             RouteEntry newEntry;
             memcpy(newEntry.destination_addr, announcePacket.source, RNS_ADDRESS_SIZE);
             newEntry.last_heard_time = now;
@@ -61,7 +61,7 @@ void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType int
                  newEntry.next_hop_ip = sender_ip;
                  newEntry.next_hop_port = RNS_UDP_PORT;
             }
-            // Serial.print(" via If="); Serial.print(static_cast<int>(interface)); Serial.print(" Hops="); Serial.println(newEntry.hops); // Verbose
+            // DebugSerial.print(" via If="); DebugSerial.print(static_cast<int>(interface)); DebugSerial.print(" Hops="); DebugSerial.println(newEntry.hops); // Verbose
             _routes.push_back(newEntry);
         } else {
             // Table full - Replace oldest entry
@@ -71,7 +71,7 @@ void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType int
                 });
 
             if (oldest_it != _routes.end()) {
-                 Serial.print("! RT Full. Replacing oldest route to "); Utils::printBytes(oldest_it->destination_addr, RNS_ADDRESS_SIZE, Serial); Serial.println();
+                 DebugSerial.print("! RT Full. Replacing oldest route to "); Utils::printBytes(oldest_it->destination_addr, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
                  // TODO: Need InterfaceManager interaction to remove old peer if replacing ESP-NOW route
                  // This requires passing the InterfaceManager reference, which adds coupling.
                  // Example: if (ifManager && oldest_it->interface == InterfaceType::ESP_NOW) { ifManager->removeEspNowPeer(oldest_it->next_hop_mac); }
@@ -84,7 +84,7 @@ void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType int
                  if (interface == InterfaceType::ESP_NOW) { memcpy(oldest_it->next_hop_mac, sender_mac, 6); oldest_it->next_hop_ip=IPAddress(); oldest_it->next_hop_port=0; }
                  else if (interface == InterfaceType::WIFI_UDP) { oldest_it->next_hop_ip = sender_ip; oldest_it->next_hop_port=RNS_UDP_PORT; memset(oldest_it->next_hop_mac,0,6); }
             } else {
-                 Serial.println("! RT Full. Error finding oldest route to replace."); // Should not happen if list not empty
+                 DebugSerial.println("! RT Full. Error finding oldest route to replace."); // Should not happen if list not empty
             }
         }
     }
@@ -108,7 +108,7 @@ void RoutingTable::prune(InterfaceManager* ifManager) {
         bool changed = false;
         for (auto it = _routes.begin(); it != _routes.end(); /* manual increment */ ) {
             if (now - it->last_heard_time > ROUTE_TIMEOUT_MS) {
-                 Serial.print("RT: Route timed out for "); Utils::printBytes(it->destination_addr, RNS_ADDRESS_SIZE, Serial); Serial.println();
+                 DebugSerial.print("RT: Route timed out for "); Utils::printBytes(it->destination_addr, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
                  // If it was an ESP-NOW route, remove the peer via InterfaceManager
                  if (ifManager && it->interface == InterfaceType::ESP_NOW) {
                       ifManager->removeEspNowPeer(it->next_hop_mac);
@@ -125,19 +125,19 @@ void RoutingTable::prune(InterfaceManager* ifManager) {
 }
 
 void RoutingTable::print() {
-    Serial.println("--- Routing Table ---");
-    if (_routes.empty()) { Serial.println("(Empty)"); return; }
+    DebugSerial.println("--- Routing Table ---");
+    if (_routes.empty()) { DebugSerial.println("(Empty)"); return; }
     int i = 0;
     unsigned long now = millis();
     for (const auto& entry : _routes) {
-        Serial.print(i++); Serial.print(": Dst="); Utils::printBytes(entry.destination_addr, RNS_ADDRESS_SIZE, Serial);
-        Serial.print(" If="); Serial.print(static_cast<int>(entry.interface));
-        Serial.print(" Hops="); Serial.print(entry.hops);
-        if (entry.interface == InterfaceType::ESP_NOW) { Serial.print(" MAC="); Utils::printBytes(entry.next_hop_mac, 6, Serial); }
-        else if (entry.interface == InterfaceType::WIFI_UDP) { Serial.print(" IP="); Serial.print(entry.next_hop_ip); }
-        Serial.print(" Age="); Serial.print((now - entry.last_heard_time) / 1000); Serial.println("s");
+        DebugSerial.print(i++); DebugSerial.print(": Dst="); Utils::printBytes(entry.destination_addr, RNS_ADDRESS_SIZE, Serial);
+        DebugSerial.print(" If="); DebugSerial.print(static_cast<int>(entry.interface));
+        DebugSerial.print(" Hops="); DebugSerial.print(entry.hops);
+        if (entry.interface == InterfaceType::ESP_NOW) { DebugSerial.print(" MAC="); Utils::printBytes(entry.next_hop_mac, 6, Serial); }
+        else if (entry.interface == InterfaceType::WIFI_UDP) { DebugSerial.print(" IP="); DebugSerial.print(entry.next_hop_ip); }
+        DebugSerial.print(" Age="); DebugSerial.print((now - entry.last_heard_time) / 1000); DebugSerial.println("s");
     }
-    Serial.println("---------------------");
+    DebugSerial.println("---------------------");
 }
 
 // --- Announce Forwarding Prevention ---

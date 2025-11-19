@@ -6,12 +6,34 @@
 #include <vector>
 #include <array> // For group addresses
 
+// --- Debug and Interface Configuration ---
+// Use Serial (UART0/USB) for debug messages (normal Arduino Serial Monitor)
+// Use Serial1/Serial2 (UART1/UART2) for KISS interface with Reticulum
+
+#define DEBUG_ENABLED 1  // Set to 0 to completely disable debug
+
+#define DebugSerial Serial    // Use USB/UART0 for debug (Arduino Serial Monitor)
+
+// ESP32-C3 only has UART0 and UART1 (no UART2)
+// ESP32 has UART0, UART1, and UART2
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+    #define KissSerial Serial1    // ESP32-C3: Use UART1 for KISS
+    #define KISS_UART_RX 18       // ESP32-C3 UART1 default RX pin
+    #define KISS_UART_TX 19       // ESP32-C3 UART1 default TX pin
+#else
+    #define KissSerial Serial2    // ESP32: Use UART2 for KISS
+    #define KISS_UART_RX 16       // ESP32 UART2 RX pin
+    #define KISS_UART_TX 17       // ESP32 UART2 TX pin
+#endif
+
+#define KISS_SERIAL_SPEED 115200
+
 // --- WiFi Credentials ---
-const char *WIFI_SSID = "YourWiFiSSID"; // <<< CHANGE ME
-const char *WIFI_PASSWORD = "YourWiFiPassword"; // <<< CHANGE ME
+extern const char *WIFI_SSID; // <<< CHANGE ME in Config.cpp
+extern const char *WIFI_PASSWORD; // <<< CHANGE ME in Config.cpp
 
 // --- Node Configuration ---
-const char *BT_DEVICE_NAME = "ESP32-C3-RNSGW"; // Changed slightly from default
+extern const char *BT_DEVICE_NAME;
 const int EEPROM_ADDR_NODE = 0;  // 8 bytes
 const int EEPROM_ADDR_PKTID = 8; // 2 bytes (Start after node address)
 const int EEPROM_SIZE = 16;      // Min size needed (8+2 = 10, use 16 or 32)
@@ -46,13 +68,17 @@ const size_t MAX_RECENT_ANNOUNCES = 40; // Max announce IDs to remember for loop
 const std::vector<std::array<uint8_t, RNS_ADDRESS_SIZE>> SUBSCRIBED_GROUPS = {
     // {0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x01}, // Example Group 1
     // {0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34, 0x56, 0x78}  // Example Group 2
+    // Destination hash for PLAIN destination ["esp32", "node"] - calculated by tests/read_from_reticulum.py
+    // This allows the ESP32 to receive messages sent to this destination
+    {0xB6, 0x01, 0x0E, 0xA1, 0x1F, 0xDF, 0xC0, 0x4E} // First 8 bytes of 16-byte hash (truncated for group)
+
 };
 
 // --- Interface Identifiers ---
 enum class InterfaceType {
     UNKNOWN,
     LOCAL, // For packets originating from this node
-    SERIAL,
+    SERIAL_PORT,
     BLUETOOTH,
     ESP_NOW,
     WIFI_UDP

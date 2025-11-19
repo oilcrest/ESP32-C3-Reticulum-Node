@@ -11,7 +11,7 @@ Link::Link(const uint8_t* destination, LinkManager& owner) :
     if(destination){
         memcpy(_destinationAddress.data(), destination, RNS_ADDRESS_SIZE);
     } else {
-        Serial.println("! FATAL: Link created with null destination!");
+        DebugSerial.println("! FATAL: Link created with null destination!");
         // Ensure state reflects error
         _state = LinkState::CLOSED;
         memset(_destinationAddress.data(), 0xFF, RNS_ADDRESS_SIZE); // Mark as invalid?
@@ -24,7 +24,7 @@ Link::Link(const uint8_t* destination, LinkManager& owner) :
 }
 
 Link::~Link() {
-    // Serial.print("Link destructor: "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); Serial.println();
+    // DebugSerial.print("Link destructor: "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
 }
 
 // Public method to initiate link establishment
@@ -32,10 +32,10 @@ bool Link::establish() {
     if (_state != LinkState::CLOSED) {
         // If already pending or established, report success (or no-op)
         if(_state == LinkState::PENDING_REQ || _state == LinkState::ESTABLISHED) return true;
-        Serial.println("Link::establish called but state not CLOSED.");
+        DebugSerial.println("Link::establish called but state not CLOSED.");
         return false;
     }
-    Serial.print("Link::establish to "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); Serial.println();
+    DebugSerial.print("Link::establish to "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
     sendLinkRequest(); // Send the actual request packet
     // Return value indicates if sending was attempted, not if established yet
     return (_state == LinkState::PENDING_REQ); // Should be PENDING_REQ if sendLinkRequest succeeded
@@ -62,9 +62,9 @@ void Link::sendLinkRequest() {
         _stateTimer = millis(); // Start timeout timer for REQ ACK
         _currentRetryCount = 0;
         updateActivity();
-        // Serial.println("Link Request sent."); // Verbose
+        // DebugSerial.println("Link Request sent."); // Verbose
     } else {
-        Serial.println("! ERROR: Link::sendLinkRequest serialize failed!");
+        DebugSerial.println("! ERROR: Link::sendLinkRequest serialize failed!");
         teardown(); // Failed to send, cannot establish
     }
 }
@@ -72,16 +72,16 @@ void Link::sendLinkRequest() {
 // Public method to send application data reliably
 bool Link::sendData(const std::vector<uint8_t>& dataPayload) {
     if (_state != LinkState::ESTABLISHED) {
-         Serial.println("! Link::sendData failed: Link not established.");
+         DebugSerial.println("! Link::sendData failed: Link not established.");
          return false;
     }
     // Enforce simplified window size of 1
     if (!_pendingOutgoingPackets.empty()) {
-         Serial.println("! Link::sendData failed: Link busy (awaiting ACK).");
+         DebugSerial.println("! Link::sendData failed: Link busy (awaiting ACK).");
          return false; // Wait for previous ACK
     }
     if (dataPayload.size() > RNS_MAX_PAYLOAD - RNS_SEQ_SIZE) {
-        Serial.println("! Link::sendData failed: Payload too large.");
+        DebugSerial.println("! Link::sendData failed: Payload too large.");
         return false;
     }
 
@@ -105,7 +105,7 @@ bool Link::sendData(const std::vector<uint8_t>& dataPayload) {
 // Internal: Adds packet to queue, sends, starts timers
 void Link::sendPacketInternal(const RnsPacketInfo& packetInfo) {
      if (_pendingOutgoingPackets.size() >= 1) { // Re-check window size
-        Serial.println("! Link::sendPacketInternal failed: Window full.");
+        DebugSerial.println("! Link::sendPacketInternal failed: Window full.");
         return;
      }
 
@@ -131,9 +131,9 @@ void Link::sendPacketInternal(const RnsPacketInfo& packetInfo) {
         _stateTimer = millis(); // Start/reset retransmission timer
         _currentRetryCount = 0; // Reset overall retry count for this attempt
         updateActivity();
-        // Serial.print("Link::sendPacketInternal sent seq "); Serial.println(pending.packetInfo.sequence_number); // Verbose
+        // DebugSerial.print("Link::sendPacketInternal sent seq "); DebugSerial.println(pending.packetInfo.sequence_number); // Verbose
     } else {
-         Serial.println("! ERROR: Link::sendPacketInternal serialize failed!");
+         DebugSerial.println("! ERROR: Link::sendPacketInternal serialize failed!");
          // Consider tearing down the link if core serialization fails
          teardown();
     }
@@ -142,7 +142,7 @@ void Link::sendPacketInternal(const RnsPacketInfo& packetInfo) {
 // Main state machine for processing incoming packets relevant to this link
 void Link::handlePacket(const RnsPacketInfo& packetInfo) {
     if (!packetInfo.valid) {
-        Serial.println("! Link::handlePacket received invalid packet info. Ignoring.");
+        DebugSerial.println("! Link::handlePacket received invalid packet info. Ignoring.");
         return;
     }
     updateActivity(); // Mark link as active
@@ -167,7 +167,7 @@ void Link::handlePacket(const RnsPacketInfo& packetInfo) {
             // Waiting for ACK to our Link Request (handled by processAck)
             // If we receive another Link Request, peer might not have received ours or ACK lost
             if (packetInfo.context == RNS_CONTEXT_LINK_REQ) {
-                 Serial.println("Link(PENDING): Received concurrent LINK_REQ. Sending ACK.");
+                 DebugSerial.println("Link(PENDING): Received concurrent LINK_REQ. Sending ACK.");
                  sendAck(0); // ACK their REQ (seq 0 for control packets)
                  // Should we transition to ESTABLISHED here? RNS spec suggests yes.
                  _state = LinkState::ESTABLISHED;
@@ -175,7 +175,7 @@ void Link::handlePacket(const RnsPacketInfo& packetInfo) {
                  _outgoingSequence = 0;         // Reset our sequence too
                  clearPendingQueue();
                  _stateTimer = 0; // Stop REQ timer
-                 Serial.println("Link Established (from Pending by concurrent REQ).");
+                 DebugSerial.println("Link Established (from Pending by concurrent REQ).");
             } // Ignore other packets like DATA until established
             break;
 
@@ -184,7 +184,7 @@ void Link::handlePacket(const RnsPacketInfo& packetInfo) {
             if (packetInfo.context == RNS_CONTEXT_LINK_DATA) {
                 processData(packetInfo);
             } else if (packetInfo.context == RNS_CONTEXT_LINK_REQ) {
-                 Serial.println("Link(ESTABLISHED): Received LINK_REQ. Re-sending ACK.");
+                 DebugSerial.println("Link(ESTABLISHED): Received LINK_REQ. Re-sending ACK.");
                  sendAck(0); // Re-ACK their REQ
                  // Maybe reset expected sequence? Assume peer restarted.
                  _expectedIncomingSequence = 0;
@@ -203,7 +203,7 @@ void Link::handlePacket(const RnsPacketInfo& packetInfo) {
 // Handle incoming LINK_REQ packet
 void Link::processLinkRequest(const RnsPacketInfo& reqPacket) {
      // Can be received in CLOSED or ESTABLISHED state
-     Serial.print("Link::processLinkRequest from "); Utils::printBytes(reqPacket.source, RNS_ADDRESS_SIZE, Serial); Serial.println();
+     DebugSerial.print("Link::processLinkRequest from "); Utils::printBytes(reqPacket.source, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
      sendAck(0); // ACK the control packet (seq 0)
 
      // Transition to ESTABLISHED
@@ -212,9 +212,9 @@ void Link::processLinkRequest(const RnsPacketInfo& reqPacket) {
          _outgoingSequence = 0;
          clearPendingQueue();
          _state = LinkState::ESTABLISHED;
-         Serial.println("Link Established (from Closed by REQ).");
+         DebugSerial.println("Link Established (from Closed by REQ).");
      } else { // Was ESTABLISHED already
-          Serial.println("Link Re-Established (ACKed REQ).");
+          DebugSerial.println("Link Re-Established (ACKed REQ).");
           // Optionally reset sequences if needed based on protocol interpretation
           // _expectedIncomingSequence = 0;
           // _outgoingSequence = 0;
@@ -229,15 +229,15 @@ void Link::processAck(const RnsPacketInfo& ackPacket) {
     if (_state == LinkState::PENDING_REQ) {
         // Expecting ACK for LINK_REQ (which used packet_id matching, conceptually seq 0)
         if (ackedSequence == 0) { // Check if ACK matches the control packet pseudo-sequence
-             Serial.println("Link(PENDING): Link Request ACK received.");
+             DebugSerial.println("Link(PENDING): Link Request ACK received.");
              _state = LinkState::ESTABLISHED;
              _expectedIncomingSequence = 0;
              _outgoingSequence = 0;
              clearPendingQueue();
              _stateTimer = 0; // Stop REQ timer
-             Serial.println("Link Established.");
+             DebugSerial.println("Link Established.");
         } else {
-             Serial.print("! Link(PENDING): Received ACK with unexpected seq: "); Serial.println(ackedSequence);
+             DebugSerial.print("! Link(PENDING): Received ACK with unexpected seq: "); DebugSerial.println(ackedSequence);
         }
     } else if (_state == LinkState::ESTABLISHED) {
         // Expecting ACK for a data packet
@@ -245,32 +245,32 @@ void Link::processAck(const RnsPacketInfo& ackPacket) {
             PendingPacket& frontPacket = _pendingOutgoingPackets.front();
             if (ackedSequence == frontPacket.packetInfo.sequence_number) {
                  // Correct ACK received
-                 // Serial.print("Link(ESTABLISHED): ACK received for data seq: "); Serial.println(ackedSequence); // Verbose
+                 // DebugSerial.print("Link(ESTABLISHED): ACK received for data seq: "); DebugSerial.println(ackedSequence); // Verbose
                  _pendingOutgoingPackets.pop_front(); // Remove acknowledged packet
                  _currentRetryCount = 0; // Reset overall retries for the link
                  _stateTimer = 0; // Stop retransmission timer until next send
                  // If windowing > 1, might send next packet here
             } else {
                  // Wrong sequence number ACKed - could be duplicate ACK or error
-                 Serial.print("! Link(ESTABLISHED): Received ACK for wrong seq (Expected: ");
-                 Serial.print(frontPacket.packetInfo.sequence_number);
-                 Serial.print(", Got: "); Serial.print(ackedSequence); Serial.println("). Ignoring.");
+                 DebugSerial.print("! Link(ESTABLISHED): Received ACK for wrong seq (Expected: ");
+                 DebugSerial.print(frontPacket.packetInfo.sequence_number);
+                 DebugSerial.print(", Got: "); DebugSerial.print(ackedSequence); DebugSerial.println("). Ignoring.");
             }
         } else {
              // Received an ACK but queue is empty - likely duplicate ACK, ignore.
-             // Serial.println("Link(ESTABLISHED): Received unexpected ACK (queue empty). Ignoring."); // Verbose
+             // DebugSerial.println("Link(ESTABLISHED): Received unexpected ACK (queue empty). Ignoring."); // Verbose
         }
     } else if (_state == LinkState::CLOSING) {
          // Expecting ACK for LINK_CLOSE (conceptually seq 0)
          if (ackedSequence == 0) {
-            Serial.println("Link(CLOSING): Link Close ACK received.");
+            DebugSerial.println("Link(CLOSING): Link Close ACK received.");
             _state = LinkState::CLOSED; // Final state
             clearPendingQueue();
             _stateTimer = 0;
             // Notify manager to remove this link instance
              _ownerRef.removeLink(_destinationAddress.data());
          } else {
-              Serial.print("! Link(CLOSING): Received ACK with unexpected seq: "); Serial.println(ackedSequence);
+              DebugSerial.print("! Link(CLOSING): Received ACK with unexpected seq: "); DebugSerial.println(ackedSequence);
          }
     }
      // Ignore ACKs in CLOSED state
@@ -280,7 +280,7 @@ void Link::processAck(const RnsPacketInfo& ackPacket) {
 void Link::processData(const RnsPacketInfo& dataPacket) {
      if (_state != LinkState::ESTABLISHED) return; // Should not happen
 
-     // Serial.print("Link(ESTABLISHED): Received Data seq: "); Serial.println(dataPacket.sequence_number); // Verbose
+     // DebugSerial.print("Link(ESTABLISHED): Received Data seq: "); DebugSerial.println(dataPacket.sequence_number); // Verbose
 
      if (dataPacket.sequence_number == _expectedIncomingSequence) {
           // Correct sequence - Process data and send ACK
@@ -289,11 +289,11 @@ void Link::processData(const RnsPacketInfo& dataPacket) {
           sendAck(dataPacket.sequence_number);
      } else if (dataPacket.sequence_number < _expectedIncomingSequence) {
           // Duplicate packet - Resend ACK for the duplicate's sequence number
-          Serial.print("Link(ESTABLISHED): Duplicate data seq "); Serial.print(dataPacket.sequence_number); Serial.print(" (expected "); Serial.print(_expectedIncomingSequence); Serial.println("). Resending ACK.");
+          DebugSerial.print("Link(ESTABLISHED): Duplicate data seq "); DebugSerial.print(dataPacket.sequence_number); DebugSerial.print(" (expected "); DebugSerial.print(_expectedIncomingSequence); DebugSerial.println("). Resending ACK.");
           sendAck(dataPacket.sequence_number);
      } else {
           // Out of order - Ignore (simple strategy)
-          Serial.print("! Link(ESTABLISHED): Out-of-order seq "); Serial.print(dataPacket.sequence_number); Serial.print(" (expected "); Serial.print(_expectedIncomingSequence); Serial.println("). Ignoring.");
+          DebugSerial.print("! Link(ESTABLISHED): Out-of-order seq "); DebugSerial.print(dataPacket.sequence_number); DebugSerial.print(" (expected "); DebugSerial.print(_expectedIncomingSequence); DebugSerial.println("). Ignoring.");
      }
 }
 
@@ -311,11 +311,11 @@ void Link::sendAck(uint16_t sequenceToAck) {
         sequenceToAck); // Sequence being ACKed goes in payload
 
       if (ok) {
-         // Serial.print("Link Sending ACK for seq: "); Serial.println(sequenceToAck); // Verbose
+         // DebugSerial.print("Link Sending ACK for seq: "); DebugSerial.println(sequenceToAck); // Verbose
          _ownerRef.sendPacketRaw(buffer, len, _destinationAddress.data());
          updateActivity();
       } else {
-         Serial.println("! ERROR: Link::sendAck serialize failed!");
+         DebugSerial.println("! ERROR: Link::sendAck serialize failed!");
       }
 }
 
@@ -340,22 +340,22 @@ void Link::checkTimeouts() {
     if (_stateTimer != 0 && now - _stateTimer > timeoutDuration) {
         // Timeout occurred!
         if (_state == LinkState::PENDING_REQ) {
-             Serial.println("! Link Request timed out.");
+             DebugSerial.println("! Link Request timed out.");
              teardown(); // Give up establishing
         } else if (_state == LinkState::ESTABLISHED && !_pendingOutgoingPackets.empty()) {
              // Data ACK timeout
              if (_currentRetryCount < LINK_MAX_RETRIES) {
                  _currentRetryCount++;
-                 Serial.print("! Link ACK timeout. Retrying packet (Attempt ");
-                 Serial.print(_currentRetryCount); Serial.print("/"); Serial.print(LINK_MAX_RETRIES); Serial.println(")...");
+                 DebugSerial.print("! Link ACK timeout. Retrying packet (Attempt ");
+                 DebugSerial.print(_currentRetryCount); DebugSerial.print("/"); DebugSerial.print(LINK_MAX_RETRIES); DebugSerial.println(")...");
                  retransmitOldestPending(); // Retransmit and resets _stateTimer
              } else {
-                  Serial.println("! Link max retries reached. Tearing down link.");
+                  DebugSerial.println("! Link max retries reached. Tearing down link.");
                   teardown(); // Give up after max retries
              }
         } else if (_state == LinkState::CLOSING) {
              // Close ACK timeout
-             Serial.println("! Link Close ACK timed out. Force closing.");
+             DebugSerial.println("! Link Close ACK timed out. Force closing.");
              teardown(); // Force close locally, manager will prune
         }
     }
@@ -370,8 +370,8 @@ void Link::retransmitOldestPending() {
      uint16_t oldPacketId = pending.packetInfo.packet_id;
      pending.packetInfo.packet_id = _ownerRef.getNextPacketId(); // Use new packet ID
 
-     Serial.print("Link Retransmitting seq "); Serial.print(pending.packetInfo.sequence_number);
-     Serial.print(" ID "); Serial.print(pending.packetInfo.packet_id); Serial.print(" (Retry "); Serial.print(_currentRetryCount); Serial.println(")");
+     DebugSerial.print("Link Retransmitting seq "); DebugSerial.print(pending.packetInfo.sequence_number);
+     DebugSerial.print(" ID "); DebugSerial.print(pending.packetInfo.packet_id); DebugSerial.print(" (Retry "); DebugSerial.print(_currentRetryCount); DebugSerial.println(")");
 
      uint8_t buffer[MAX_PACKET_SIZE];
      size_t len = 0;
@@ -388,7 +388,7 @@ void Link::retransmitOldestPending() {
          _stateTimer = millis(); // Reset retransmission timer
          updateActivity();
       } else {
-          Serial.println("! ERROR: Link::retransmit serialize failed! Tearing down.");
+          DebugSerial.println("! ERROR: Link::retransmit serialize failed! Tearing down.");
           teardown();
       }
 }
@@ -397,7 +397,7 @@ void Link::retransmitOldestPending() {
 void Link::close(bool notifyPeer) {
      if (_state == LinkState::CLOSED) return; // Already closed
 
-     Serial.print("Link::close requested for "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); Serial.println();
+     DebugSerial.print("Link::close requested for "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
      // Clear any pending packets immediately when close is initiated
      clearPendingQueue();
 
@@ -425,12 +425,12 @@ void Link::sendLinkClose() {
         RNS_CONTEXT_LINK_CLOSE,
         closePacketId, 0); // Sequence 0 for control
       if (ok) { _ownerRef.sendPacketRaw(buffer, len, _destinationAddress.data()); }
-      else { Serial.println("! ERROR: Link::sendLinkClose serialize failed!"); }
+      else { DebugSerial.println("! ERROR: Link::sendLinkClose serialize failed!"); }
 }
 
 // Handle incoming LINK_CLOSE packet from peer
 void Link::processLinkClose(const RnsPacketInfo& closePacket) {
-    Serial.print("Link::processLinkClose received from: "); Utils::printBytes(closePacket.source, RNS_ADDRESS_SIZE, Serial); Serial.println();
+    DebugSerial.print("Link::processLinkClose received from: "); Utils::printBytes(closePacket.source, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
     sendAck(0); // ACK the close request (seq 0)
     _state = LinkState::CLOSED; // Transition to closed state immediately
     clearPendingQueue();
@@ -442,7 +442,7 @@ void Link::processLinkClose(const RnsPacketInfo& closePacket) {
 // Does NOT notify the peer.
 bool Link::teardown() {
     if (_state == LinkState::CLOSED) return false;
-    Serial.print("! Link::teardown invoked for "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); Serial.println();
+    DebugSerial.print("! Link::teardown invoked for "); Utils::printBytes(_destinationAddress.data(), RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
     _state = LinkState::CLOSED; // Set state directly
     clearPendingQueue();
     // DO NOT call removeLink here - let the owner (LinkManager) manage removal
