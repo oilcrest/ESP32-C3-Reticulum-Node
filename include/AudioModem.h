@@ -1,0 +1,86 @@
+#ifndef AUDIO_MODEM_H
+#define AUDIO_MODEM_H
+
+#include <Arduino.h>
+#include <vector>
+#include <cstdint>
+
+// Audio Modem Implementation
+// Supports AFSK (Audio Frequency Shift Keying) and Bell 202
+// For direct audio connection to HAM radio transceivers
+
+class AudioModem {
+public:
+    enum class ModemType {
+        BELL_202,   // Bell 202 (1200 baud, 1200/2200 Hz)
+        AFSK_1200,  // AFSK 1200 baud
+        AFSK_2400   // AFSK 2400 baud (future)
+    };
+    
+    AudioModem(ModemType type = ModemType::BELL_202);
+    ~AudioModem();
+    
+    // Initialize audio modem
+    bool begin(uint8_t rxPin, uint8_t txPin, uint32_t sampleRate = 8000);
+    
+    // Transmit data (modulate to audio)
+    bool transmit(const uint8_t* data, size_t len);
+    
+    // Receive data (demodulate from audio)
+    bool receive(std::vector<uint8_t>& output);
+    
+    // Process audio samples (call from interrupt or main loop)
+    void processAudioSample(int16_t sample);
+    
+    // Get current modem status
+    bool isTransmitting() const { return _transmitting; }
+    bool isReceiving() const { return _receiving; }
+    
+    // Set modem parameters
+    void setMarkFrequency(uint16_t freq) { _markFreq = freq; }
+    void setSpaceFrequency(uint16_t freq) { _spaceFreq = freq; }
+    void setBaudRate(uint16_t baud) { _baudRate = baud; }
+    
+private:
+    ModemType _type;
+    uint8_t _rxPin;
+    uint8_t _txPin;
+    uint32_t _sampleRate;
+    uint16_t _markFreq;
+    uint16_t _spaceFreq;
+    uint16_t _baudRate;
+    
+    bool _transmitting;
+    bool _receiving;
+    
+    // Transmit state
+    size_t _txBitIndex;
+    size_t _txByteIndex;
+    std::vector<uint8_t> _txBuffer;
+    uint32_t _txSampleIndex;
+    
+    // Receive state
+    std::vector<int16_t> _rxBuffer;
+    size_t _rxBufferIndex;
+    uint32_t _rxSampleIndex;
+    bool _rxBitState;
+    uint8_t _rxByte;
+    uint8_t _rxBitCount;
+    
+    // Demodulation state
+    float _lastSample;
+    float _filterState;
+    
+    // Generate audio sample for current bit
+    int16_t generateSample(uint8_t bit);
+    
+    // Demodulate bit from audio sample
+    bool demodulateBit(int16_t sample);
+    
+    // NRZI encoding/decoding
+    uint8_t nrziEncode(uint8_t bit, uint8_t& lastBit);
+    uint8_t nrziDecode(uint8_t bit, uint8_t& lastBit);
+};
+
+#endif // AUDIO_MODEM_H
+

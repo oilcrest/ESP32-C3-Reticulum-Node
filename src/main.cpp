@@ -33,7 +33,8 @@ void setup()
   DebugSerial.begin(115200);
   delay(100); // Give Serial time to initialize
 
-  // Start other Serial2 (UART2 GPIO16/17 in esp32) for KISS interface with Reticulum
+  // Start KISS serial interface (platform-specific UART)
+  // Note: Pin configuration is handled in Config.h based on platform
   KissSerial.begin(KISS_SERIAL_SPEED, SERIAL_8N1, KISS_UART_RX, KISS_UART_TX);
 
   DebugSerial.println("\n\n===================================");

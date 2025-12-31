@@ -5,6 +5,14 @@
 #include "ReticulumPacket.h" // For MAX_PACKET_SIZE
 #include <WiFi.h>
 #include <esp_wifi.h> // For esp_wifi_set_ps
+#ifdef LORA_ENABLED
+#include <SPI.h>
+#endif
+
+#ifdef IPFS_ENABLED
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+#endif
 
 // ESP-NOW broadcast MAC address (FF:FF:FF:FF:FF:FF)
 static const uint8_t espnow_broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -16,8 +24,20 @@ InterfaceManager::InterfaceManager(PacketReceiverCallback receiver, RoutingTable
     _packetReceiver(receiver),
     _routingTableRef(routingTable),
     // Use lambda to capture 'this' for the member function callback
-    _serialKissProcessor([this](const std::vector<uint8_t>& data, InterfaceType iface){ this->handleKissPacket(data, iface); }),
-    _bluetoothKissProcessor([this](const std::vector<uint8_t>& data, InterfaceType iface){ this->handleKissPacket(data, iface); })
+    _serialKissProcessor([this](const std::vector<uint8_t>& data, InterfaceType iface){ this->handleKissPacket(data, iface); })
+#if BLUETOOTH_CLASSIC_AVAILABLE
+    , _bluetoothKissProcessor([this](const std::vector<uint8_t>& data, InterfaceType iface){ this->handleKissPacket(data, iface); })
+#endif
+#ifdef LORA_ENABLED
+    , _lora(nullptr), _loraInitialized(false)
+#endif
+#ifdef HAM_MODEM_ENABLED
+    , _hamModemKissProcessor([this](const std::vector<uint8_t>& data, InterfaceType iface){ this->handleKissPacket(data, iface); })
+    , _hamModemInitialized(false)
+#endif
+#ifdef IPFS_ENABLED
+    , _ipfsInitialized(false)
+#endif
 {
     if (_instance != nullptr) {
          // This should not happen if InterfaceManager is instantiated only once by ReticulumNode
@@ -31,8 +51,10 @@ InterfaceManager::InterfaceManager(PacketReceiverCallback receiver, RoutingTable
 void InterfaceManager::setup() {
     setupSerial(); // Assumes Serial.begin() already called
     
-    // Initialize Bluetooth first
+    // Initialize Bluetooth first (if available)
+#if BLUETOOTH_CLASSIC_AVAILABLE
     setupBluetooth();
+#endif
     
     // Configure WiFi power save mode BEFORE initializing WiFi
     esp_wifi_set_ps(WIFI_PS_MIN_MODEM);  // Use minimum power save mode when both BT and WiFi are active
@@ -41,18 +63,40 @@ void InterfaceManager::setup() {
     setupWiFi();   // Sets mode, connects, starts UDP
     setupESPNow(); // Depends on WiFi mode being set
     
+#ifdef LORA_ENABLED
+    setupLoRa();
+#endif
+
+#ifdef HAM_MODEM_ENABLED
+    setupHAMModem();
+#endif
+
+#ifdef IPFS_ENABLED
+    setupIPFS();
+#endif
+    
     DebugSerial.println("Interface Manager Setup Complete.");
 }
 
 void InterfaceManager::loop() {
     // Process inputs from KISS interfaces
     processSerialInput();
+#if BLUETOOTH_CLASSIC_AVAILABLE
     processBluetoothInput();
+#endif
 
     // Process UDP input if WiFi is connected
     if (WiFi.status() == WL_CONNECTED) {
         processWiFiInput();
     }
+
+#ifdef LORA_ENABLED
+    processLoRaInput();
+#endif
+
+#ifdef HAM_MODEM_ENABLED
+    processHAMModemInput();
+#endif
 }
 
 void InterfaceManager::setupSerial() {
@@ -110,6 +154,7 @@ void InterfaceManager::setupESPNow() {
     DebugSerial.println("IF: ESP-NOW Initialized.");
 }
 
+#if BLUETOOTH_CLASSIC_AVAILABLE
 void InterfaceManager::setupBluetooth() {
      if (!_serialBT.begin(BT_DEVICE_NAME)) {
          DebugSerial.println("! ERROR: Bluetooth Serial initialization failed!");
@@ -118,6 +163,7 @@ void InterfaceManager::setupBluetooth() {
         DebugSerial.println(BT_DEVICE_NAME);
     }
 }
+#endif
 
 // --- Input Processing ---
 void InterfaceManager::processWiFiInput() {
@@ -150,11 +196,13 @@ void InterfaceManager::processSerialInput() {
     }
 }
 
+#if BLUETOOTH_CLASSIC_AVAILABLE
 void InterfaceManager::processBluetoothInput() {
      while (_serialBT.available()) {
          _bluetoothKissProcessor.decodeByte(_serialBT.read(), InterfaceType::BLUETOOTH);
     }
 }
+#endif
 
 // --- KISS Packet Handling ---
 void InterfaceManager::handleKissPacket(const std::vector<uint8_t>& packetData, InterfaceType interface) {
@@ -201,9 +249,16 @@ void InterfaceManager::sendPacket(const uint8_t *packetBuffer, size_t packetLen,
         if (WiFi.status() == WL_CONNECTED && excludeInterface != InterfaceType::WIFI_UDP) {
              sendPacketViaWiFi(packetBuffer, packetLen, nullptr); // Broadcast = null dest for internal func
         }
+#ifdef LORA_ENABLED
+        if (_loraInitialized && excludeInterface != InterfaceType::LORA) {
+            sendPacketViaLoRa(packetBuffer, packetLen, nullptr);
+        }
+#endif
         // Broadcast on Serial/BT usually only for specific bridging applications, skip by default
         // if (excludeInterface != InterfaceType::SERIAL_PORT) { sendPacketViaSerial(packetBuffer, packetLen); }
+#if BLUETOOTH_CLASSIC_AVAILABLE
         // if (_serialBT.connected() && excludeInterface != InterfaceType::BLUETOOTH) { sendPacketViaBluetooth(packetBuffer, packetLen); }
+#endif
     }
 }
 
@@ -213,7 +268,18 @@ void InterfaceManager::sendPacketVia(InterfaceType ifType, const uint8_t *packet
         case InterfaceType::ESP_NOW:  sendPacketViaEspNow(packetBuffer, packetLen, destinationAddr); break;
         case InterfaceType::WIFI_UDP: sendPacketViaWiFi(packetBuffer, packetLen, destinationAddr); break;
         case InterfaceType::SERIAL_PORT:   sendPacketViaSerial(packetBuffer, packetLen); break;
+#if BLUETOOTH_CLASSIC_AVAILABLE
         case InterfaceType::BLUETOOTH:sendPacketViaBluetooth(packetBuffer, packetLen); break;
+#endif
+#ifdef LORA_ENABLED
+        case InterfaceType::LORA: sendPacketViaLoRa(packetBuffer, packetLen, destinationAddr); break;
+#endif
+#ifdef HAM_MODEM_ENABLED
+        case InterfaceType::HAM_MODEM: sendPacketViaHAMModem(packetBuffer, packetLen); break;
+#endif
+#ifdef IPFS_ENABLED
+        case InterfaceType::IPFS: sendPacketViaIPFS(packetBuffer, packetLen, destinationAddr); break;
+#endif
         default: DebugSerial.print("! WARN: sendPacketVia unsupported interface: "); DebugSerial.println(static_cast<int>(ifType)); break;
      }
 }
@@ -225,6 +291,16 @@ void InterfaceManager::broadcastAnnounce(const uint8_t *packetBuffer, size_t pac
      if (WiFi.status() == WL_CONNECTED) {
          sendPacketViaWiFi(packetBuffer, packetLen, nullptr);
      }
+#ifdef LORA_ENABLED
+     if (_loraInitialized) {
+         sendPacketViaLoRa(packetBuffer, packetLen, nullptr);
+     }
+#endif
+#ifdef HAM_MODEM_ENABLED
+     if (_hamModemInitialized) {
+         sendPacketViaHAMModem(packetBuffer, packetLen);
+     }
+#endif
 }
 
 // Internal send implementations
@@ -283,6 +359,7 @@ void InterfaceManager::sendPacketViaSerial(const uint8_t *packetBuffer, size_t p
     size_t sent = KissSerial.write(kissEncoded.data(), kissEncoded.size());
     // if(sent != kissEncoded.size()) { DebugSerial.println("! WARN: Serial write incomplete"); } // Optional check
 }
+#if BLUETOOTH_CLASSIC_AVAILABLE
 void InterfaceManager::sendPacketViaBluetooth(const uint8_t *packetBuffer, size_t packetLen) {
     if (!_serialBT.connected()) return;
     std::vector<uint8_t> kissEncoded;
@@ -290,6 +367,7 @@ void InterfaceManager::sendPacketViaBluetooth(const uint8_t *packetBuffer, size_
     size_t sent = _serialBT.write(kissEncoded.data(), kissEncoded.size());
      // if(sent != kissEncoded.size()) { DebugSerial.println("! WARN: Bluetooth write incomplete"); } // Optional check
 }
+#endif
 
 // --- ESP-NOW Peer Management ---
 bool InterfaceManager::addEspNowPeer(const uint8_t* mac_addr) {
@@ -353,3 +431,472 @@ void InterfaceManager::staticEspNowSendCallback(const uint8_t *mac_addr, esp_now
     }
 }
 */
+
+#ifdef LORA_ENABLED
+// --- LoRa Implementation ---
+void InterfaceManager::setupLoRa() {
+    DebugSerial.println("IF: Initializing LoRa...");
+    
+    // Initialize SPI for LoRa
+    // Use VSPI (SPI3) for ESP32, HSPI for other variants
+    #if defined(CONFIG_IDF_TARGET_ESP32)
+        SPIClass* spi = new SPIClass(VSPI);
+    #else
+        SPIClass* spi = new SPIClass(HSPI);
+    #endif
+    
+    spi->begin(LORA_SPI_SCK, LORA_SPI_MISO, LORA_SPI_MOSI, LORA_CS_PIN);
+    
+    // Create LoRa module instance with SPI settings
+    Module* loraModule = new Module(LORA_CS_PIN, LORA_DIO0_PIN, LORA_RST_PIN, RADIOLIB_NC, *spi, SPISettings(2000000, MSBFIRST, SPI_MODE0));
+    
+    // Create SX1278 instance
+    _lora = new SX1278(loraModule);
+    
+    // Initialize LoRa with configuration
+    int state = _lora->begin(LORA_FREQUENCY, LORA_BANDWIDTH, LORA_SPREADING_FACTOR, LORA_CODING_RATE, LORA_SYNC_WORD, LORA_OUTPUT_POWER, LORA_PREAMBLE_LENGTH, LORA_GAIN);
+    
+    if (state == RADIOLIB_ERR_NONE) {
+        _loraInitialized = true;
+        DebugSerial.println("IF: LoRa initialized successfully.");
+        DebugSerial.print("IF: Frequency: "); DebugSerial.print(LORA_FREQUENCY); DebugSerial.println(" MHz");
+        DebugSerial.print("IF: Bandwidth: "); DebugSerial.print(LORA_BANDWIDTH); DebugSerial.println(" kHz");
+        DebugSerial.print("IF: Spreading Factor: "); DebugSerial.println(LORA_SPREADING_FACTOR);
+    } else {
+        _loraInitialized = false;
+        DebugSerial.print("! ERROR: LoRa initialization failed with code: ");
+        DebugSerial.println(state);
+        delete _lora;
+        _lora = nullptr;
+    }
+}
+
+void InterfaceManager::processLoRaInput() {
+    if (!_loraInitialized || !_lora) return;
+    
+    // Check if data is available
+    if (_lora->available()) {
+        // Determine packet size (LoRa can receive variable length packets)
+        size_t packetSize = _lora->getPacketLength();
+        if (packetSize == 0 || packetSize > MAX_PACKET_SIZE) {
+            DebugSerial.print("! WARN: Invalid LoRa packet size: ");
+            DebugSerial.println(packetSize);
+            _lora->clearIRQFlags();
+            return;
+        }
+        
+        // Allocate buffer for received packet
+        std::unique_ptr<uint8_t[]> loraBuffer(new (std::nothrow) uint8_t[packetSize]);
+        if (!loraBuffer) {
+            DebugSerial.println("! ERROR: Failed to allocate LoRa receive buffer!");
+            _lora->clearIRQFlags();
+            return;
+        }
+        
+        // Read packet data
+        int state = _lora->readData(loraBuffer.get(), packetSize);
+        if (state == RADIOLIB_ERR_NONE) {
+            // Pass received packet to packet receiver callback
+            // LoRa doesn't have MAC addresses, so use nullptr
+            if (_packetReceiver) {
+                _packetReceiver(loraBuffer.get(), packetSize, InterfaceType::LORA, nullptr, IPAddress(), 0);
+            }
+        } else {
+            DebugSerial.print("! WARN: LoRa read failed with code: ");
+            DebugSerial.println(state);
+        }
+        
+        // Clear IRQ flags to prepare for next packet
+        _lora->clearIRQFlags();
+    }
+}
+
+void InterfaceManager::sendPacketViaLoRa(const uint8_t *packetBuffer, size_t packetLen, const uint8_t *destinationAddr) {
+    if (!_loraInitialized || !_lora || !packetBuffer || packetLen == 0) return;
+    
+    // LoRa is broadcast by nature, so we ignore destinationAddr for now
+    // In a more advanced implementation, you could use different frequencies/channels for different destinations
+    
+    // Send packet
+    int state = _lora->transmit(packetBuffer, packetLen);
+    if (state == RADIOLIB_ERR_NONE) {
+        // Success - packet sent
+        // DebugSerial.println("IF: LoRa packet sent successfully.");
+    } else {
+        DebugSerial.print("! ERROR: LoRa transmit failed with code: ");
+        DebugSerial.println(state);
+    }
+}
+#endif
+
+#ifdef HAM_MODEM_ENABLED
+// --- HAM Modem Implementation ---
+void InterfaceManager::setupHAMModem() {
+    DebugSerial.println("IF: Initializing HAM Modem...");
+    
+    // Initialize serial port for HAM modem (typically connected to TNC)
+    HAM_MODEM_SERIAL.begin(HAM_MODEM_BAUD, SERIAL_8N1, HAM_MODEM_RX_PIN, HAM_MODEM_TX_PIN);
+    
+    // Most HAM TNCs use KISS protocol, which we already support
+    // The KISS processor will handle incoming packets
+    _hamModemInitialized = true;
+    
+    DebugSerial.println("IF: HAM Modem initialized (KISS protocol).");
+    DebugSerial.print("IF: Baud rate: "); DebugSerial.println(HAM_MODEM_BAUD);
+    DebugSerial.print("IF: Callsign: "); DebugSerial.println(APRS_CALLSIGN);
+}
+
+void InterfaceManager::processHAMModemInput() {
+    if (!_hamModemInitialized) return;
+    
+    // Process incoming bytes from HAM modem via KISS
+    while (HAM_MODEM_SERIAL.available()) {
+        _hamModemKissProcessor.decodeByte(HAM_MODEM_SERIAL.read(), InterfaceType::HAM_MODEM);
+    }
+}
+
+void InterfaceManager::sendPacketViaHAMModem(const uint8_t *packetBuffer, size_t packetLen) {
+    if (!_hamModemInitialized || !packetBuffer || packetLen == 0) return;
+    
+    // Encode packet with KISS framing
+    std::vector<uint8_t> kissEncoded;
+    KISSProcessor::encode(packetBuffer, packetLen, kissEncoded);
+    
+    // Send via HAM modem serial port
+    size_t sent = HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
+    if (sent != kissEncoded.size()) {
+        DebugSerial.println("! WARN: HAM Modem write incomplete");
+    }
+}
+
+void InterfaceManager::sendAPRSPacket(const char* destination, const char* message) {
+    if (!_hamModemInitialized) {
+        DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
+        return;
+    }
+    
+    // APRS packet format: SOURCE>DEST,RELAY:message
+    // This is a simplified implementation - full APRS would require AX.25 encoding
+    String aprsPacket = String(APRS_CALLSIGN);
+    aprsPacket += "-";
+    aprsPacket += String(APRS_SSID);
+    aprsPacket += ">";
+    aprsPacket += String(destination);
+    aprsPacket += ":";
+    aprsPacket += String(message);
+    
+    DebugSerial.print("IF: Sending APRS packet: ");
+    DebugSerial.println(aprsPacket);
+    
+    // For now, send as plain text over KISS
+    // In a full implementation, this would be encoded as AX.25 frames
+    std::vector<uint8_t> aprsData(aprsPacket.length());
+    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
+    
+    std::vector<uint8_t> kissEncoded;
+    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
+}
+
+void InterfaceManager::sendAPRSPosition(float lat, float lon, float altitude, const char* comment) {
+    if (!_hamModemInitialized) {
+        DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
+        return;
+    }
+    
+    // Format: !DDMM.MMNS/DDDMM.MMEW[comment]
+    char latStr[10], lonStr[11];
+    int latDeg = abs((int)lat);
+    int lonDeg = abs((int)lon);
+    float latMin = (abs(lat) - latDeg) * 60.0;
+    float lonMin = (abs(lon) - lonDeg) * 60.0;
+    
+    snprintf(latStr, sizeof(latStr), "%02d%05.2f", latDeg, latMin);
+    snprintf(lonStr, sizeof(lonStr), "%03d%05.2f", lonDeg, lonMin);
+    
+    String aprsPacket = String(APRS_CALLSIGN);
+    aprsPacket += "-";
+    aprsPacket += String(APRS_SSID);
+    aprsPacket += ">APRS:!";
+    aprsPacket += String(latStr);
+    aprsPacket += (lat >= 0) ? "N" : "S";
+    aprsPacket += String(APRS_SYMBOL);
+    aprsPacket += String(lonStr);
+    aprsPacket += (lon >= 0) ? "E" : "W";
+    if (altitude > 0) {
+        aprsPacket += "/A=";
+        aprsPacket += String((int)(altitude * 3.28084)); // Convert to feet
+    }
+    if (comment && strlen(comment) > 0) {
+        aprsPacket += String(comment);
+    }
+    
+    DebugSerial.print("IF: Sending APRS position: ");
+    DebugSerial.println(aprsPacket);
+    
+    std::vector<uint8_t> aprsData(aprsPacket.length());
+    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
+    
+    std::vector<uint8_t> kissEncoded;
+    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
+}
+
+void InterfaceManager::sendAPRSWeather(float temp, float humidity, float pressure, const char* comment) {
+    if (!_hamModemInitialized) {
+        DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
+        return;
+    }
+    
+    // Format: _DDHHMMc...s...g...t...r...p...P...h..b...
+    String aprsPacket = String(APRS_CALLSIGN);
+    aprsPacket += "-";
+    aprsPacket += String(APRS_SSID);
+    aprsPacket += ">APRS:_";
+    
+    // Time (simplified - use current time if available)
+    aprsPacket += "000000";  // Placeholder for time
+    
+    // Wind direction (3 digits, 000-360)
+    aprsPacket += "000";
+    
+    // Wind speed (3 digits, mph)
+    aprsPacket += "000";
+    
+    // Gust speed (3 digits, mph)
+    aprsPacket += "000";
+    
+    // Temperature (3 digits, Fahrenheit, with sign)
+    int tempF = (int)(temp * 9.0/5.0 + 32.0);
+    if (tempF < 0) {
+        aprsPacket += "/";
+        tempF = -tempF;
+    } else {
+        aprsPacket += "c";
+    }
+    char tempStr[4];
+    snprintf(tempStr, sizeof(tempStr), "%03d", tempF);
+    aprsPacket += String(tempStr);
+    
+    // Rainfall (3 digits, 1 hour, hundredths of inches)
+    aprsPacket += "000";
+    
+    // Rainfall (3 digits, 24 hour)
+    aprsPacket += "000";
+    
+    // Rainfall (3 digits, since midnight)
+    aprsPacket += "000";
+    
+    // Humidity (2 digits, percent)
+    char humStr[3];
+    snprintf(humStr, sizeof(humStr), "%02d", (int)humidity);
+    aprsPacket += String(humStr);
+    
+    // Pressure (5 digits, millibars, with decimal)
+    char pressStr[6];
+    snprintf(pressStr, sizeof(pressStr), "%05d", (int)(pressure * 10));
+    aprsPacket += String(pressStr);
+    
+    if (comment && strlen(comment) > 0) {
+        aprsPacket += String(comment);
+    }
+    
+    DebugSerial.print("IF: Sending APRS weather: ");
+    DebugSerial.println(aprsPacket);
+    
+    std::vector<uint8_t> aprsData(aprsPacket.length());
+    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
+    
+    std::vector<uint8_t> kissEncoded;
+    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
+}
+
+void InterfaceManager::sendAPRSMessage(const char* addressee, const char* message) {
+    if (!_hamModemInitialized) {
+        DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
+        return;
+    }
+    
+    // Format: :ADDRESSEE :message{message_id}
+    String aprsPacket = String(APRS_CALLSIGN);
+    aprsPacket += "-";
+    aprsPacket += String(APRS_SSID);
+    aprsPacket += ">APRS::";
+    
+    // Addressee (9 characters, padded with spaces)
+    char addr[10] = {0};
+    strncpy(addr, addressee, 9);
+    for (int i = strlen(addr); i < 9; i++) {
+        addr[i] = ' ';
+    }
+    aprsPacket += String(addr);
+    aprsPacket += ":";
+    aprsPacket += String(message);
+    
+    DebugSerial.print("IF: Sending APRS message: ");
+    DebugSerial.println(aprsPacket);
+    
+    std::vector<uint8_t> aprsData(aprsPacket.length());
+    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
+    
+    std::vector<uint8_t> kissEncoded;
+    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
+}
+#endif
+
+#ifdef IPFS_ENABLED
+// --- IPFS Implementation (Lightweight Client) ---
+void InterfaceManager::setupIPFS() {
+    DebugSerial.println("IF: Initializing IPFS client...");
+    
+    // IPFS client is lightweight - just needs WiFi connection
+    if (WiFi.status() == WL_CONNECTED) {
+        _ipfsInitialized = true;
+        DebugSerial.print("IF: IPFS Gateway: ");
+        DebugSerial.println(IPFS_GATEWAY_URL);
+        DebugSerial.println("IF: IPFS client ready (gateway mode).");
+    } else {
+        _ipfsInitialized = false;
+        DebugSerial.println("! WARN: IPFS requires WiFi connection. Disabled.");
+    }
+}
+
+bool InterfaceManager::fetchIPFSContent(const char* ipfsHash, std::vector<uint8_t>& output) {
+    if (!_ipfsInitialized || WiFi.status() != WL_CONNECTED) {
+        DebugSerial.println("! ERROR: IPFS not available (WiFi not connected)");
+        return false;
+    }
+    
+    if (!ipfsHash || strlen(ipfsHash) == 0) {
+        DebugSerial.println("! ERROR: Invalid IPFS hash");
+        return false;
+    }
+    
+    // Build URL: gateway + hash
+    String url = String(IPFS_GATEWAY_URL) + String(ipfsHash);
+    
+    DebugSerial.print("IF: Fetching IPFS content: ");
+    DebugSerial.println(url);
+    
+    _httpClient.begin(url);
+    _httpClient.setTimeout(IPFS_TIMEOUT_MS);
+    
+    int httpCode = _httpClient.GET();
+    
+    if (httpCode == HTTP_CODE_OK) {
+        int contentLength = _httpClient.getSize();
+        
+        if (contentLength > 0 && contentLength <= IPFS_MAX_CONTENT_SIZE) {
+            // Read content
+            WiFiClient* stream = _httpClient.getStreamPtr();
+            output.resize(contentLength);
+            
+            size_t bytesRead = 0;
+            while (bytesRead < (size_t)contentLength && stream->available()) {
+                bytesRead += stream->readBytes(output.data() + bytesRead, contentLength - bytesRead);
+            }
+            
+            _httpClient.end();
+            DebugSerial.print("IF: IPFS content fetched: ");
+            DebugSerial.print(bytesRead);
+            DebugSerial.println(" bytes");
+            return true;
+        } else {
+            DebugSerial.print("! ERROR: IPFS content too large: ");
+            DebugSerial.println(contentLength);
+            _httpClient.end();
+            return false;
+        }
+    } else {
+        DebugSerial.print("! ERROR: IPFS fetch failed, HTTP code: ");
+        DebugSerial.println(httpCode);
+        _httpClient.end();
+        return false;
+    }
+}
+
+bool InterfaceManager::publishToIPFS(const uint8_t* data, size_t len, String& ipfsHash) {
+    if (!_ipfsInitialized || WiFi.status() != WL_CONNECTED) {
+        DebugSerial.println("! ERROR: IPFS not available (WiFi not connected)");
+        return false;
+    }
+    
+#if IPFS_LOCAL_NODE_ENABLED
+    // Use local IPFS node API
+    String url = String(IPFS_LOCAL_NODE_URL) + "/api/v0/add";
+    
+    DebugSerial.print("IF: Publishing to IPFS via local node: ");
+    DebugSerial.println(url);
+    
+    _httpClient.begin(url);
+    _httpClient.setTimeout(IPFS_PUBLISH_TIMEOUT_MS);
+    _httpClient.addHeader("Content-Type", "multipart/form-data");
+    
+    // Create multipart form data
+    String boundary = "----WebKitFormBoundary" + String(random(10000, 99999));
+    String formData = "--" + boundary + "\r\n";
+    formData += "Content-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\n";
+    formData += "Content-Type: application/octet-stream\r\n\r\n";
+    
+    // Note: This is a simplified implementation
+    // Full multipart encoding would be more complex
+    int httpCode = _httpClient.POST(data, len);
+    
+    if (httpCode == HTTP_CODE_OK) {
+        String response = _httpClient.getString();
+        
+        // Parse JSON response to extract hash
+        // Response format: {"Name":"data.bin","Hash":"Qm...","Size":"123"}
+        int hashStart = response.indexOf("\"Hash\":\"");
+        if (hashStart >= 0) {
+            hashStart += 8;
+            int hashEnd = response.indexOf("\"", hashStart);
+            if (hashEnd > hashStart) {
+                ipfsHash = response.substring(hashStart, hashEnd);
+                _httpClient.end();
+                DebugSerial.print("IF: IPFS content published, hash: ");
+                DebugSerial.println(ipfsHash);
+                return true;
+            }
+        }
+        _httpClient.end();
+        DebugSerial.println("! ERROR: Failed to parse IPFS response");
+        return false;
+    } else {
+        DebugSerial.print("! ERROR: IPFS publish failed, HTTP code: ");
+        DebugSerial.println(httpCode);
+        _httpClient.end();
+        return false;
+    }
+#else
+    // No local node - suggest alternatives
+    DebugSerial.println("! WARN: IPFS local node not enabled.");
+    DebugSerial.println("! INFO: Set IPFS_LOCAL_NODE_ENABLED to 1 in Config.h");
+    DebugSerial.println("! INFO: Or use a pinning service (Pinata, Infura, etc.)");
+    return false;
+#endif
+}
+
+void InterfaceManager::sendPacketViaIPFS(const uint8_t *packetBuffer, size_t packetLen, const uint8_t *destinationAddr) {
+    // IPFS is primarily for content addressing, not direct packet transmission
+    // This could be used to:
+    // 1. Store packet content in IPFS
+    // 2. Send IPFS hash as a reference in Reticulum packet
+    // 3. Recipient fetches content from IPFS using hash
+    
+    if (!_ipfsInitialized) {
+        DebugSerial.println("! WARN: IPFS not initialized, cannot send packet");
+        return;
+    }
+    
+    // For now, this is a placeholder
+    // In a full implementation, you would:
+    // 1. Publish packet content to IPFS
+    // 2. Create a Reticulum packet containing the IPFS hash
+    // 3. Send the Reticulum packet via normal interfaces
+    
+    DebugSerial.println("! INFO: IPFS packet sending requires publishing implementation.");
+}
+#endif

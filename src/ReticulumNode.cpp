@@ -99,8 +99,10 @@ void ReticulumNode::loadOrGenerateAddress() {
 
 void ReticulumNode::generateNodeAddress() {
     DebugSerial.println("Generating random node address...");
-    // Ensure random is seeded reasonably well
-    randomSeed(analogRead(A0) ^ millis() ^ esp_random());
+    // Ensure random is seeded reasonably well using esp_random() which is available on all ESP32 variants
+    // Combine with millis() for additional entropy
+    uint32_t seed = esp_random() ^ (millis() << 16) ^ (millis() & 0xFFFF);
+    randomSeed(seed);
     for (int i = 0; i < RNS_ADDRESS_SIZE; ++i) {
         _nodeAddress[i] = random(0, 256);
     }
@@ -111,7 +113,7 @@ void ReticulumNode::generateNodeAddress() {
 }
 
 void ReticulumNode::saveNodeAddress() {
-     DebugSerial.print("Saving node address to EEPROM: "); printNodeAddress(); // Print before saving
+    DebugSerial.print("Saving node address to EEPROM: "); printNodeAddress(); // Print before saving
      // EEPROM.begin required before write if not already called or ended
      // if (!EEPROM.begin(EEPROM_SIZE)) { DebugSerial.println("! EEPROM begin failed for save!"); return; }
     for (int i = 0; i < RNS_ADDRESS_SIZE; ++i) {
