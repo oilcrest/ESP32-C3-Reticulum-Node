@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <vector>
 #include <cstdint>
+#include <queue>
 
 // Audio Modem Implementation
 // Supports AFSK (Audio Frequency Shift Keying) and Bell 202
@@ -42,6 +43,20 @@ public:
     void setBaudRate(uint16_t baud) { _baudRate = baud; }
     
 private:
+    // Simple Goertzel tone detector
+    struct Goertzel {
+        float s_prev = 0.0f;
+        float s_prev2 = 0.0f;
+        float coeff = 0.0f;
+        void reset() { s_prev = s_prev2 = 0.0f; }
+        void feed(float sample) {
+            float s = sample + coeff * s_prev - s_prev2;
+            s_prev2 = s_prev;
+            s_prev = s;
+        }
+        float power() const { return s_prev2 * s_prev2 + s_prev * s_prev - coeff * s_prev * s_prev2; }
+    };
+
     ModemType _type;
     uint8_t _rxPin;
     uint8_t _txPin;
@@ -49,6 +64,9 @@ private:
     uint16_t _markFreq;
     uint16_t _spaceFreq;
     uint16_t _baudRate;
+    uint16_t _samplesPerBit;
+    uint8_t _ledcChannel;
+    uint8_t _ledcResolution;
     
     bool _transmitting;
     bool _receiving;
@@ -70,6 +88,16 @@ private:
     // Demodulation state
     float _lastSample;
     float _filterState;
+    Goertzel _goertzelMark;
+    Goertzel _goertzelSpace;
+    uint16_t _sampleCount;
+    uint8_t _onesCount;
+    bool _inFrame;
+    uint8_t _rxCurrentByte;
+    uint8_t _rxBitPos;
+    uint8_t _lastNRZIState;
+    bool _nrziInitialized;
+    std::queue< std::vector<uint8_t> > _rxFrames;
     
     // Generate audio sample for current bit
     int16_t generateSample(uint8_t bit);
@@ -80,6 +108,10 @@ private:
     // NRZI encoding/decoding
     uint8_t nrziEncode(uint8_t bit, uint8_t& lastBit);
     uint8_t nrziDecode(uint8_t bit, uint8_t& lastBit);
+
+    // Bit processing helpers
+    void processDecodedBit(uint8_t bit);
+    void finalizeFrame();
 };
 
 #endif // AUDIO_MODEM_H

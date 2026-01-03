@@ -3,10 +3,21 @@
 #include "Utils.h"
 #include "RoutingTable.h" // Need full definition now for RouteEntry
 #include "ReticulumPacket.h" // For MAX_PACKET_SIZE
+#include "AX25.h"
 #include <WiFi.h>
 #include <esp_wifi.h> // For esp_wifi_set_ps
 #ifdef LORA_ENABLED
 #include <SPI.h>
+#endif
+#ifdef HAM_MODEM_ENABLED
+  #ifdef AUDIO_MODEM_ENABLED
+    #include "AudioModem.h"
+  #endif
+  #ifdef WINLINK_ENABLED
+    #include "Winlink.h"
+  #endif
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #endif
 
 #ifdef IPFS_ENABLED
@@ -34,6 +45,12 @@ InterfaceManager::InterfaceManager(PacketReceiverCallback receiver, RoutingTable
 #ifdef HAM_MODEM_ENABLED
     , _hamModemKissProcessor([this](const std::vector<uint8_t>& data, InterfaceType iface){ this->handleKissPacket(data, iface); })
     , _hamModemInitialized(false)
+    #ifdef AUDIO_MODEM_ENABLED
+    , _audioModem(nullptr)
+    #endif
+    #ifdef WINLINK_ENABLED
+    , _winlink(nullptr)
+    #endif
 #endif
 #ifdef IPFS_ENABLED
     , _ipfsInitialized(false)
@@ -96,6 +113,10 @@ void InterfaceManager::loop() {
 
 #ifdef HAM_MODEM_ENABLED
     processHAMModemInput();
+#endif
+
+#if defined(HAM_MODEM_ENABLED) && defined(AUDIO_MODEM_ENABLED)
+    pollAX25FromAudioModem();
 #endif
 }
 
@@ -536,6 +557,48 @@ void InterfaceManager::setupHAMModem() {
     
     // Initialize serial port for HAM modem (typically connected to TNC)
     HAM_MODEM_SERIAL.begin(HAM_MODEM_BAUD, SERIAL_8N1, HAM_MODEM_RX_PIN, HAM_MODEM_TX_PIN);
+
+#ifdef AUDIO_MODEM_ENABLED
+    if (_audioModem == nullptr) {
+        _audioModem = new AudioModem(AudioModem::ModemType::BELL_202);
+        if (_audioModem && !_audioModem->begin(HAM_MODEM_RX_PIN, HAM_MODEM_TX_PIN, AUDIO_MODEM_SAMPLE_RATE)) {
+            DebugSerial.println("! WARN: Audio modem initialization failed (stub implementation).");
+        } else {
+            DebugSerial.println("IF: Audio modem initialized.");
+        }
+    }
+#endif
+
+#ifdef WINLINK_ENABLED
+    if (_winlink == nullptr) {
+        _winlink = new Winlink();
+        if (!_winlink->begin(APRS_CALLSIGN, WINLINK_PASSWORD)) {
+            DebugSerial.println("! WARN: Winlink initialization failed (stub implementation).");
+        } else {
+            DebugSerial.println("IF: Winlink initialized.");
+        }
+    }
+#endif
+
+#if defined(AUDIO_MODEM_ENABLED)
+    // Spawn audio capture task if not running
+    if (_audioCaptureTaskHandle == nullptr && _audioModem) {
+        BaseType_t r = xTaskCreatePinnedToCore(
+            audioCaptureTask,
+            "audio_cap",
+            4096,
+            this,
+            1,
+            &_audioCaptureTaskHandle,
+            0);
+        if (r != pdPASS) {
+            DebugSerial.println("! WARN: Failed to start audio capture task");
+            _audioCaptureTaskHandle = nullptr;
+        } else {
+            DebugSerial.println("IF: Audio capture task started.");
+        }
+    }
+#endif
     
     // Most HAM TNCs use KISS protocol, which we already support
     // The KISS processor will handle incoming packets
@@ -555,6 +618,46 @@ void InterfaceManager::processHAMModemInput() {
     }
 }
 
+#if defined(HAM_MODEM_ENABLED) && defined(AUDIO_MODEM_ENABLED)
+bool InterfaceManager::pollAX25FromAudioModem() {
+    if (!_audioModem) return false;
+    std::vector<uint8_t> frame;
+    bool got = false;
+    // Drain all available frames this loop
+    while (_audioModem->receive(frame)) {
+        got = true;
+        // Deliver as if received over HAM modem (AX.25 over KISS)
+        if (!frame.empty() && _packetReceiver) {
+            // Interpret as raw AX.25 frame; wrap in KISS data frame for consistency
+            _packetReceiver(frame.data(), frame.size(), InterfaceType::HAM_MODEM, nullptr, IPAddress(), 0);
+        }
+    }
+    return got;
+}
+#endif
+
+#if defined(HAM_MODEM_ENABLED) && defined(AUDIO_MODEM_ENABLED)
+// Static FreeRTOS task entry
+void InterfaceManager::audioCaptureTask(void* arg) {
+    InterfaceManager* self = static_cast<InterfaceManager*>(arg);
+    if (self) self->audioCaptureLoop();
+    vTaskDelete(nullptr);
+}
+
+void InterfaceManager::audioCaptureLoop() {
+    const uint32_t samplePeriodUs = 1000000UL / AUDIO_MODEM_SAMPLE_RATE;
+    while (true) {
+        // Read ADC sample
+        int raw = analogRead(AUDIO_MODEM_RX_PIN); // 0-4095
+        int16_t centered = (int16_t)((raw - 2048) << 4); // center to signed 16-bit-ish
+        if (_audioModem) {
+            _audioModem->processAudioSample(centered);
+        }
+        delayMicroseconds(samplePeriodUs);
+    }
+}
+#endif
+
 void InterfaceManager::sendPacketViaHAMModem(const uint8_t *packetBuffer, size_t packetLen) {
     if (!_hamModemInitialized || !packetBuffer || packetLen == 0) return;
     
@@ -569,32 +672,34 @@ void InterfaceManager::sendPacketViaHAMModem(const uint8_t *packetBuffer, size_t
     }
 }
 
+// Helper: build AX.25 UI frame for APRS (dest defaults to \"APRS-0\")
+static bool buildAX25UIFrame(const String& sourceCall, uint8_t sourceSsid,
+                             const String& destCall, uint8_t destSsid,
+                             const String& info, std::vector<uint8_t>& out)
+{
+    AX25::Frame frame;
+    frame.source = AX25::Address(sourceCall.c_str(), sourceSsid);
+    frame.destination = AX25::Address(destCall.c_str(), destSsid);
+    frame.control = AX25::ControlType::U_UI;
+    frame.pid = 0xF0; // No layer 3 protocol
+    frame.info.assign(info.begin(), info.end());
+    return AX25::encodeFrame(frame, out);
+}
+
 void InterfaceManager::sendAPRSPacket(const char* destination, const char* message) {
     if (!_hamModemInitialized) {
-        DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
+        DebugSerial.println(\"! ERROR: HAM Modem not initialized for APRS\");
         return;
     }
-    
-    // APRS packet format: SOURCE>DEST,RELAY:message
-    // This is a simplified implementation - full APRS would require AX.25 encoding
-    String aprsPacket = String(APRS_CALLSIGN);
-    aprsPacket += "-";
-    aprsPacket += String(APRS_SSID);
-    aprsPacket += ">";
-    aprsPacket += String(destination);
-    aprsPacket += ":";
-    aprsPacket += String(message);
-    
-    DebugSerial.print("IF: Sending APRS packet: ");
-    DebugSerial.println(aprsPacket);
-    
-    // For now, send as plain text over KISS
-    // In a full implementation, this would be encoded as AX.25 frames
-    std::vector<uint8_t> aprsData(aprsPacket.length());
-    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
-    
+
+    String info = String(destination) + \":\" + String(message);
+    std::vector<uint8_t> ax25;
+    if (!buildAX25UIFrame(APRS_CALLSIGN, APRS_SSID, \"APRS\", 0, info, ax25)) {
+        DebugSerial.println(\"! ERROR: Failed to encode AX.25 frame for APRS packet\");
+        return;
+    }
     std::vector<uint8_t> kissEncoded;
-    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    KISSProcessor::encode(ax25.data(), ax25.size(), kissEncoded);
     HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
 }
 
@@ -603,42 +708,38 @@ void InterfaceManager::sendAPRSPosition(float lat, float lon, float altitude, co
         DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
         return;
     }
-    
+
     // Format: !DDMM.MMNS/DDDMM.MMEW[comment]
     char latStr[10], lonStr[11];
     int latDeg = abs((int)lat);
     int lonDeg = abs((int)lon);
-    float latMin = (abs(lat) - latDeg) * 60.0;
-    float lonMin = (abs(lon) - lonDeg) * 60.0;
-    
+    float latMin = (abs(lat) - latDeg) * 60.0f;
+    float lonMin = (abs(lon) - lonDeg) * 60.0f;
+
     snprintf(latStr, sizeof(latStr), "%02d%05.2f", latDeg, latMin);
     snprintf(lonStr, sizeof(lonStr), "%03d%05.2f", lonDeg, lonMin);
-    
-    String aprsPacket = String(APRS_CALLSIGN);
-    aprsPacket += "-";
-    aprsPacket += String(APRS_SSID);
-    aprsPacket += ">APRS:!";
-    aprsPacket += String(latStr);
-    aprsPacket += (lat >= 0) ? "N" : "S";
-    aprsPacket += String(APRS_SYMBOL);
-    aprsPacket += String(lonStr);
-    aprsPacket += (lon >= 0) ? "E" : "W";
+
+    String info = "!";               // Position report
+    info += String(latStr);
+    info += (lat >= 0) ? "N" : "S";
+    info += String(APRS_SYMBOL);
+    info += String(lonStr);
+    info += (lon >= 0) ? "E" : "W";
     if (altitude > 0) {
-        aprsPacket += "/A=";
-        aprsPacket += String((int)(altitude * 3.28084)); // Convert to feet
+        info += "/A=";
+        info += String((int)(altitude * 3.28084)); // meters to feet
     }
     if (comment && strlen(comment) > 0) {
-        aprsPacket += String(comment);
+        info += String(comment);
     }
-    
-    DebugSerial.print("IF: Sending APRS position: ");
-    DebugSerial.println(aprsPacket);
-    
-    std::vector<uint8_t> aprsData(aprsPacket.length());
-    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
-    
+
+    std::vector<uint8_t> ax25;
+    if (!buildAX25UIFrame(APRS_CALLSIGN, APRS_SSID, "APRS", 0, info, ax25)) {
+        DebugSerial.println("! ERROR: Failed to encode AX.25 frame for APRS position");
+        return;
+    }
     std::vector<uint8_t> kissEncoded;
-    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    KISSProcessor::encode(ax25.data(), ax25.size(), kissEncoded);
     HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
 }
 
@@ -647,68 +748,39 @@ void InterfaceManager::sendAPRSWeather(float temp, float humidity, float pressur
         DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
         return;
     }
-    
+
     // Format: _DDHHMMc...s...g...t...r...p...P...h..b...
-    String aprsPacket = String(APRS_CALLSIGN);
-    aprsPacket += "-";
-    aprsPacket += String(APRS_SSID);
-    aprsPacket += ">APRS:_";
-    
-    // Time (simplified - use current time if available)
-    aprsPacket += "000000";  // Placeholder for time
-    
-    // Wind direction (3 digits, 000-360)
-    aprsPacket += "000";
-    
-    // Wind speed (3 digits, mph)
-    aprsPacket += "000";
-    
-    // Gust speed (3 digits, mph)
-    aprsPacket += "000";
-    
-    // Temperature (3 digits, Fahrenheit, with sign)
-    int tempF = (int)(temp * 9.0/5.0 + 32.0);
-    if (tempF < 0) {
-        aprsPacket += "/";
-        tempF = -tempF;
-    } else {
-        aprsPacket += "c";
-    }
-    char tempStr[4];
-    snprintf(tempStr, sizeof(tempStr), "%03d", tempF);
-    aprsPacket += String(tempStr);
-    
-    // Rainfall (3 digits, 1 hour, hundredths of inches)
-    aprsPacket += "000";
-    
-    // Rainfall (3 digits, 24 hour)
-    aprsPacket += "000";
-    
-    // Rainfall (3 digits, since midnight)
-    aprsPacket += "000";
-    
-    // Humidity (2 digits, percent)
-    char humStr[3];
-    snprintf(humStr, sizeof(humStr), "%02d", (int)humidity);
-    aprsPacket += String(humStr);
-    
-    // Pressure (5 digits, millibars, with decimal)
-    char pressStr[6];
-    snprintf(pressStr, sizeof(pressStr), "%05d", (int)(pressure * 10));
-    aprsPacket += String(pressStr);
-    
+    String info = "_000000";  // Time placeholder
+    info += "000"; // wind dir
+    info += "000"; // wind speed
+    info += "000"; // gust speed
+
+    int tempF = (int)(temp * 9.0 / 5.0 + 32.0);
+    info += (tempF < 0) ? "/" : "c";
+    char tempStr[4]; snprintf(tempStr, sizeof(tempStr), "%03d", abs(tempF));
+    info += String(tempStr);
+
+    info += "000"; // rain 1h
+    info += "000"; // rain 24h
+    info += "000"; // rain since midnight
+
+    char humStr[3]; snprintf(humStr, sizeof(humStr), "%02d", (int)humidity);
+    info += String(humStr);
+
+    char pressStr[6]; snprintf(pressStr, sizeof(pressStr), "%05d", (int)(pressure * 10));
+    info += String(pressStr);
+
     if (comment && strlen(comment) > 0) {
-        aprsPacket += String(comment);
+        info += String(comment);
     }
-    
-    DebugSerial.print("IF: Sending APRS weather: ");
-    DebugSerial.println(aprsPacket);
-    
-    std::vector<uint8_t> aprsData(aprsPacket.length());
-    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
-    
+
+    std::vector<uint8_t> ax25;
+    if (!buildAX25UIFrame(APRS_CALLSIGN, APRS_SSID, "APRS", 0, info, ax25)) {
+        DebugSerial.println("! ERROR: Failed to encode AX.25 frame for APRS weather");
+        return;
+    }
     std::vector<uint8_t> kissEncoded;
-    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    KISSProcessor::encode(ax25.data(), ax25.size(), kissEncoded);
     HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
 }
 
@@ -717,31 +789,25 @@ void InterfaceManager::sendAPRSMessage(const char* addressee, const char* messag
         DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
         return;
     }
-    
-    // Format: :ADDRESSEE :message{message_id}
-    String aprsPacket = String(APRS_CALLSIGN);
-    aprsPacket += "-";
-    aprsPacket += String(APRS_SSID);
-    aprsPacket += ">APRS::";
-    
-    // Addressee (9 characters, padded with spaces)
+
     char addr[10] = {0};
     strncpy(addr, addressee, 9);
     for (int i = strlen(addr); i < 9; i++) {
         addr[i] = ' ';
     }
-    aprsPacket += String(addr);
-    aprsPacket += ":";
-    aprsPacket += String(message);
-    
-    DebugSerial.print("IF: Sending APRS message: ");
-    DebugSerial.println(aprsPacket);
-    
-    std::vector<uint8_t> aprsData(aprsPacket.length());
-    memcpy(aprsData.data(), aprsPacket.c_str(), aprsPacket.length());
-    
+
+    String info = ":";
+    info += String(addr);
+    info += ":";
+    info += String(message);
+
+    std::vector<uint8_t> ax25;
+    if (!buildAX25UIFrame(APRS_CALLSIGN, APRS_SSID, "APRS", 0, info, ax25)) {
+        DebugSerial.println("! ERROR: Failed to encode AX.25 frame for APRS message");
+        return;
+    }
     std::vector<uint8_t> kissEncoded;
-    KISSProcessor::encode(aprsData.data(), aprsData.size(), kissEncoded);
+    KISSProcessor::encode(ax25.data(), ax25.size(), kissEncoded);
     HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
 }
 #endif
@@ -822,31 +888,39 @@ bool InterfaceManager::publishToIPFS(const uint8_t* data, size_t len, String& ip
         DebugSerial.println("! ERROR: IPFS not available (WiFi not connected)");
         return false;
     }
-    
+
 #if IPFS_LOCAL_NODE_ENABLED
-    // Use local IPFS node API
+    // Use local IPFS node API with proper multipart/form-data encoding
     String url = String(IPFS_LOCAL_NODE_URL) + "/api/v0/add";
-    
+
     DebugSerial.print("IF: Publishing to IPFS via local node: ");
     DebugSerial.println(url);
-    
+
+    // Boundary for multipart form
+    const String boundary = "----ESP32IPFSBoundary";
+    const String contentType = "multipart/form-data; boundary=" + boundary;
+
+    // Construct multipart body: --boundary\r\n headers \r\n\r\n <data> \r\n--boundary--\r\n
+    String prefix = "--" + boundary + "\r\n";
+    prefix += "Content-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\n";
+    prefix += "Content-Type: application/octet-stream\r\n\r\n";
+    String suffix = "\r\n--" + boundary + "--\r\n";
+
+    std::vector<uint8_t> body;
+    body.reserve(prefix.length() + len + suffix.length());
+    body.insert(body.end(), prefix.begin(), prefix.end());
+    body.insert(body.end(), data, data + len);
+    body.insert(body.end(), suffix.begin(), suffix.end());
+
     _httpClient.begin(url);
     _httpClient.setTimeout(IPFS_PUBLISH_TIMEOUT_MS);
-    _httpClient.addHeader("Content-Type", "multipart/form-data");
-    
-    // Create multipart form data
-    String boundary = "----WebKitFormBoundary" + String(random(10000, 99999));
-    String formData = "--" + boundary + "\r\n";
-    formData += "Content-Disposition: form-data; name=\"file\"; filename=\"data.bin\"\r\n";
-    formData += "Content-Type: application/octet-stream\r\n\r\n";
-    
-    // Note: This is a simplified implementation
-    // Full multipart encoding would be more complex
-    int httpCode = _httpClient.POST(data, len);
-    
+    _httpClient.addHeader("Content-Type", contentType);
+
+    int httpCode = _httpClient.POST(body.data(), body.size());
+
     if (httpCode == HTTP_CODE_OK) {
         String response = _httpClient.getString();
-        
+
         // Parse JSON response to extract hash
         // Response format: {"Name":"data.bin","Hash":"Qm...","Size":"123"}
         int hashStart = response.indexOf("\"Hash\":\"");

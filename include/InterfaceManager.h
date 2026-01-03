@@ -15,6 +15,15 @@
 #include <RadioLib.h>
 #endif
 
+#ifdef HAM_MODEM_ENABLED
+  #ifdef AUDIO_MODEM_ENABLED
+    #include "AudioModem.h"
+  #endif
+  #ifdef WINLINK_ENABLED
+    #include "Winlink.h"
+  #endif
+#endif
+
 #ifdef IPFS_ENABLED
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
@@ -64,6 +73,8 @@ public:
     void sendAPRSPosition(float lat, float lon, float altitude = 0, const char* comment = "");
     void sendAPRSWeather(float temp, float humidity, float pressure, const char* comment = "");
     void sendAPRSMessage(const char* addressee, const char* message);
+    // Retrieve decoded AX.25 frames from audio modem (if enabled)
+    bool pollAX25FromAudioModem();
 #endif
 
     // ESP-NOW Peer Management (can be called by RoutingTable during prune)
@@ -132,15 +143,12 @@ private:
     KISSProcessor _hamModemKissProcessor; // KISS processor for HAM modem
     bool _hamModemInitialized;
     #ifdef AUDIO_MODEM_ENABLED
-    class AudioModem* _audioModem; // Audio modem instance (forward declaration)
+    AudioModem* _audioModem; // Audio modem instance
+    TaskHandle_t _audioCaptureTaskHandle = nullptr;
     #endif
     #ifdef WINLINK_ENABLED
-    class Winlink* _winlink; // Winlink instance (forward declaration)
+    Winlink* _winlink; // Winlink instance
     #endif
-#endif
-#ifdef HAM_MODEM_ENABLED
-    KISSProcessor _hamModemKissProcessor; // KISS processor for HAM modem
-    bool _hamModemInitialized;
 #endif
 #ifdef IPFS_ENABLED
     HTTPClient _httpClient; // HTTP client for IPFS gateway access
@@ -152,6 +160,12 @@ private:
 
     // Kiss packet handler method (non-static member) called by KISSProcessor instances
     void handleKissPacket(const std::vector<uint8_t>& packetData, InterfaceType interface);
+
+#if defined(HAM_MODEM_ENABLED) && defined(AUDIO_MODEM_ENABLED)
+    // Audio capture loop (FreeRTOS task)
+    static void audioCaptureTask(void* arg);
+    void audioCaptureLoop();
+#endif
 
 };
 
