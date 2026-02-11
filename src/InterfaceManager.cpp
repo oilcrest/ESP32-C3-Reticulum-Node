@@ -672,7 +672,7 @@ void InterfaceManager::sendPacketViaHAMModem(const uint8_t *packetBuffer, size_t
     }
 }
 
-// Helper: build AX.25 UI frame for APRS (dest defaults to \"APRS-0\")
+// Helper: build AX.25 UI frame for APRS (dest defaults to "APRS-0")
 static bool buildAX25UIFrame(const String& sourceCall, uint8_t sourceSsid,
                              const String& destCall, uint8_t destSsid,
                              const String& info, std::vector<uint8_t>& out)
@@ -688,14 +688,14 @@ static bool buildAX25UIFrame(const String& sourceCall, uint8_t sourceSsid,
 
 void InterfaceManager::sendAPRSPacket(const char* destination, const char* message) {
     if (!_hamModemInitialized) {
-        DebugSerial.println(\"! ERROR: HAM Modem not initialized for APRS\");
+        DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
         return;
     }
 
-    String info = String(destination) + \":\" + String(message);
+    String info = String(destination) + ":" + String(message);
     std::vector<uint8_t> ax25;
-    if (!buildAX25UIFrame(APRS_CALLSIGN, APRS_SSID, \"APRS\", 0, info, ax25)) {
-        DebugSerial.println(\"! ERROR: Failed to encode AX.25 frame for APRS packet\");
+    if (!buildAX25UIFrame(APRS_CALLSIGN, APRS_SSID, "APRS", 0, info, ax25)) {
+        DebugSerial.println("! ERROR: Failed to encode AX.25 frame for APRS packet");
         return;
     }
     std::vector<uint8_t> kissEncoded;

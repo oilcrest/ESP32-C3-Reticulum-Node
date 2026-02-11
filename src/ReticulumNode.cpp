@@ -233,7 +233,7 @@ void ReticulumNode::handleReceivedPacket(const uint8_t *packetBuffer, size_t pac
     // --- 2. Announce Packet Handling ---
     if ((packetInfo.header_type & RNS_HEADER_TYPE_MASK) == RNS_HEADER_TYPE_ANN) {
         // DebugSerial.println("Node: Processing Announce..."); // Verbose
-        _routingTable.update(packetInfo, interface, sender_mac, sender_ip, sender_port);
+        _routingTable.update(packetInfo, interface, sender_mac, sender_ip, sender_port, &_interfaceManager);
         forwardAnnounce(packetInfo, interface); // Attempt re-broadcast
         return; // Announce handled
     }

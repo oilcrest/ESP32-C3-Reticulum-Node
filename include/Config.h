@@ -10,9 +10,31 @@
 // Use Serial (UART0/USB) for debug messages (normal Arduino Serial Monitor)
 // Use Serial1/Serial2 (UART1/UART2) for KISS interface with Reticulum
 
-#define DEBUG_ENABLED 1  // Set to 0 to completely disable debug
+#ifndef DEBUG_ENABLED
+#define DEBUG_ENABLED 0  // Set to 1 to enable debug logging
+#endif
 
-#define DebugSerial Serial    // Use USB/UART0 for debug (Arduino Serial Monitor)
+// Debug serial shim: when DEBUG_ENABLED is 0, debug output is suppressed while
+// still allowing code to compile unchanged.
+class DebugSerialShim : public Stream {
+public:
+    void begin(unsigned long baud) {
+        (void)baud;
+        // Keep Serial initialized for potential USB connection even if debug is disabled.
+        Serial.begin(baud);
+    }
+
+    int available() override { return DEBUG_ENABLED ? Serial.available() : 0; }
+    int read() override { return DEBUG_ENABLED ? Serial.read() : -1; }
+    int peek() override { return DEBUG_ENABLED ? Serial.peek() : -1; }
+    void flush() override { if (DEBUG_ENABLED) Serial.flush(); }
+    size_t write(uint8_t b) override { return DEBUG_ENABLED ? Serial.write(b) : 1; }
+    size_t write(const uint8_t *buffer, size_t size) override {
+        return DEBUG_ENABLED ? Serial.write(buffer, size) : size;
+    }
+};
+
+extern DebugSerialShim DebugSerial; // Use USB/UART0 for debug (Arduino Serial Monitor)
 
 // Platform-specific UART configuration
 // ESP32-C3, ESP32-C5, ESP32-C6: Only UART0 and UART1 (no UART2)
@@ -60,6 +82,11 @@
 #endif
 
 #define KISS_SERIAL_SPEED 115200
+
+// Demo traffic configuration (disabled by default for production)
+#ifndef DEMO_TRAFFIC_ENABLED
+#define DEMO_TRAFFIC_ENABLED 0
+#endif
 
 // --- WiFi Credentials ---
 extern const char *WIFI_SSID; // <<< CHANGE ME in Config.cpp

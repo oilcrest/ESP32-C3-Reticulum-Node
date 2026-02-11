@@ -47,7 +47,8 @@ public:
 
     // Updates table based on a received Announce packet
     void update(const RnsPacketInfo &announcePacket, InterfaceType interface,
-                const uint8_t* sender_mac, const IPAddress& sender_ip, uint16_t sender_port);
+                const uint8_t* sender_mac, const IPAddress& sender_ip, uint16_t sender_port,
+                InterfaceManager* ifManager = nullptr);
 
     // Finds the best route for a destination address
     RouteEntry* findRoute(const uint8_t *destination_addr);

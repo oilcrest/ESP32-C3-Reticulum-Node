@@ -10,7 +10,8 @@
 RoutingTable::RoutingTable() : _last_prune_time(0), _last_recent_announce_prune(0) {}
 
 void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType interface,
-                           const uint8_t* sender_mac, const IPAddress& sender_ip, uint16_t sender_port)
+                           const uint8_t* sender_mac, const IPAddress& sender_ip, uint16_t sender_port,
+                           InterfaceManager* ifManager)
 {
     // Validate sender info based on interface
     if (interface == InterfaceType::ESP_NOW && !sender_mac) return;
@@ -70,11 +71,12 @@ void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType int
                     return a.last_heard_time < b.last_heard_time;
                 });
 
-            if (oldest_it != _routes.end()) {
+              if (oldest_it != _routes.end()) {
                  DebugSerial.print("! RT Full. Replacing oldest route to "); Utils::printBytes(oldest_it->destination_addr, RNS_ADDRESS_SIZE, Serial); DebugSerial.println();
-                 // TODO: Need InterfaceManager interaction to remove old peer if replacing ESP-NOW route
-                 // This requires passing the InterfaceManager reference, which adds coupling.
-                 // Example: if (ifManager && oldest_it->interface == InterfaceType::ESP_NOW) { ifManager->removeEspNowPeer(oldest_it->next_hop_mac); }
+                  // If replacing an ESP-NOW route, remove the old peer to avoid stale entries.
+                  if (ifManager && oldest_it->interface == InterfaceType::ESP_NOW) {
+                     ifManager->removeEspNowPeer(oldest_it->next_hop_mac);
+                  }
 
                 // Overwrite the oldest entry with new data
                 memcpy(oldest_it->destination_addr, announcePacket.source, RNS_ADDRESS_SIZE);

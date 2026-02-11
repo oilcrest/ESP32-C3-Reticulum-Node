@@ -57,7 +57,8 @@ void loop()
   // Run the main node loop function
   reticulumNode.loop();
 
-  // SEND MESSAGE EVERY 10 SECONDS
+#if DEMO_TRAFFIC_ENABLED
+  // SEND MESSAGE EVERY 10 SECONDS (demo mode)
   static uint32_t last_send = 0;
   if (millis() - last_send >= 10000) {
     last_send = millis();
@@ -112,4 +113,5 @@ void loop()
       DebugSerial.println("ERROR: Failed to serialize packet!");
     }
   }
+#endif
 }
