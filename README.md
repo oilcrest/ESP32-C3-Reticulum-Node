@@ -490,7 +490,6 @@ See `CHANGELOG.md` for complete revision history.
 
 **Document Control:**
 - **Prepared By**: Akita Engineering
-- **Approved By**: S.O.
 - **Distribution**: Unrestricted
 - **Classification**: Unclassified
 
