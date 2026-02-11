@@ -502,7 +502,7 @@ void InterfaceManager::processLoRaInput() {
         if (packetSize == 0 || packetSize > MAX_PACKET_SIZE) {
             DebugSerial.print("! WARN: Invalid LoRa packet size: ");
             DebugSerial.println(packetSize);
-            _lora->clearIRQFlags();
+            _lora->clearIrqFlags(_lora->getIrqFlags());
             return;
         }
         
@@ -510,7 +510,7 @@ void InterfaceManager::processLoRaInput() {
         std::unique_ptr<uint8_t[]> loraBuffer(new (std::nothrow) uint8_t[packetSize]);
         if (!loraBuffer) {
             DebugSerial.println("! ERROR: Failed to allocate LoRa receive buffer!");
-            _lora->clearIRQFlags();
+            _lora->clearIrqFlags(_lora->getIrqFlags());
             return;
         }
         
@@ -528,7 +528,7 @@ void InterfaceManager::processLoRaInput() {
         }
         
         // Clear IRQ flags to prepare for next packet
-        _lora->clearIRQFlags();
+        _lora->clearIrqFlags(_lora->getIrqFlags());
     }
 }
 

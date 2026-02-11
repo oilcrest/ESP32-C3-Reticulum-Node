@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <WiFiUdp.h>
+#include "Config.h"
 #if BLUETOOTH_CLASSIC_AVAILABLE
 #include <BluetoothSerial.h> // Requires CONFIG_BT_ENABLED=y and CONFIG_CLASSIC_BT_ENABLED=y in sdkconfig
 #endif
@@ -29,7 +30,6 @@
 #include <WiFiClientSecure.h>
 #endif
 
-#include "Config.h"
 #include "KISS.h"
 
 // Forward declarations
@@ -118,7 +118,6 @@ private:
     void sendPacketViaBluetooth(const uint8_t *packetBuffer, size_t packetLen);
 #ifdef LORA_ENABLED
     void sendPacketViaLoRa(const uint8_t *packetBuffer, size_t packetLen, const uint8_t *destinationAddr);
-    void processLoRaInput();
 #endif
 #ifdef HAM_MODEM_ENABLED
     void sendPacketViaHAMModem(const uint8_t *packetBuffer, size_t packetLen);

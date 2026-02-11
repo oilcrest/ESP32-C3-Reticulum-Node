@@ -30,26 +30,33 @@
         #define KISS_UART_TX 19   // ESP32-C6 UART1 default TX pin
     #endif
 #else
-    #define KissSerial Serial2    // Use UART2 for KISS
+    // Default: prefer a UART that exists on the target. ESP32-S2 does not
+    // provide a Serial2 in the Arduino core, so use Serial1 there. ESP32-S3
+    // and original ESP32 typically provide Serial2.
     #if defined(CONFIG_IDF_TARGET_ESP32S2)
-        #define KISS_UART_RX 33   // ESP32-S2 UART2 RX pin (adjust if needed)
-        #define KISS_UART_TX 34   // ESP32-S2 UART2 TX pin (adjust if needed)
+        #define KissSerial Serial1    // Use UART1 for KISS on ESP32-S2
+        #define KISS_UART_RX 33       // ESP32-S2 UART1 RX pin (adjust if needed)
+        #define KISS_UART_TX 34       // ESP32-S2 UART1 TX pin (adjust if needed)
     #elif defined(CONFIG_IDF_TARGET_ESP32S3)
-        #define KISS_UART_RX 17   // ESP32-S3 UART2 RX pin
-        #define KISS_UART_TX 18   // ESP32-S3 UART2 TX pin
+        #define KissSerial Serial2    // Use UART2 for KISS
+        #define KISS_UART_RX 17       // ESP32-S3 UART2 RX pin
+        #define KISS_UART_TX 18       // ESP32-S3 UART2 TX pin
     #else
-        #define KISS_UART_RX 16   // ESP32 (original) UART2 RX pin
-        #define KISS_UART_TX 17   // ESP32 (original) UART2 TX pin
+        #define KissSerial Serial2    // Use UART2 for KISS (ESP32 original)
+        #define KISS_UART_RX 16      // ESP32 (original) UART2 RX pin
+        #define KISS_UART_TX 17      // ESP32 (original) UART2 TX pin
     #endif
 #endif
 
 // Bluetooth availability
-// ESP32-C3, ESP32-C5, ESP32-C6: No Bluetooth Classic (only BLE)
-// ESP32, ESP32-S2, ESP32-S3: Bluetooth Classic available
-#if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-    #define BLUETOOTH_CLASSIC_AVAILABLE 0
-#else
+// Conservative whitelist: only the original ESP32 (Xtensa core) is known to
+// reliably provide Bluetooth Classic in the Arduino/IDF builds used here.
+// Treat all other IDF targets as not having Classic to avoid compiling code
+// that depends on Classic-only APIs on cores that only provide BLE or no BT.
+#if defined(CONFIG_IDF_TARGET_ESP32)
     #define BLUETOOTH_CLASSIC_AVAILABLE 1
+#else
+    #define BLUETOOTH_CLASSIC_AVAILABLE 0
 #endif
 
 #define KISS_SERIAL_SPEED 115200
