@@ -285,6 +285,18 @@ pio run -e <environment_name>
 
 ---
 
+### 6.4 Production defaults and notes
+- **Debugging:** Debug output is conservative by default. The project includes a `DebugSerial` shim and `DEBUG_ENABLED` build flag; set `DEBUG_ENABLED` to 1 only when actively debugging.
+- **Demo traffic:** Periodic demo/send behavior is disabled by default (`DEMO_TRAFFIC_ENABLED = 0`) to avoid generating network traffic in production builds.
+- **ESP-NOW peer management:** The `RoutingTable` evicts stale ESP-NOW peers when routes are replaced; the `InterfaceManager` removes associated ESP-NOW peers to keep the peer list consistent.
+- **Builds:** Use PlatformIO to build per-environment or all environments. Examples:
+   - Build default env: `pio run -e esp32-c3-devkitm-1`
+   - Build all envs: `pio run`
+   - List available envs: `pio run --list-targets`
+- **Tooling:** Keep PlatformIO and Espressif cores up to date (`pip install -U platformio` and `pio update`) to access the latest board definitions and toolchains.
+- **Tests:** Test scripts are in the `tests/` directory; some tests are hardware-dependent (serial ports, radio modules) and require the corresponding devices connected and configured. Run individual scripts with `python tests/<script>.py`.
+
+
 ## 7.0 OPERATIONAL PROCEDURES
 
 ### 7.1 System Startup Procedure
