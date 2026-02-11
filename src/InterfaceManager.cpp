@@ -6,6 +6,7 @@
 #include "AX25.h"
 #include <WiFi.h>
 #include <esp_wifi.h> // For esp_wifi_set_ps
+#include <time.h>
 #ifdef LORA_ENABLED
 #include <SPI.h>
 #endif
@@ -144,6 +145,9 @@ void InterfaceManager::setupWiFi() {
     if (WiFi.status() == WL_CONNECTED) {
         DebugSerial.println("\nIF: WiFi connected.");
         DebugSerial.print("IF: IP address: "); DebugSerial.println(WiFi.localIP());
+        setenv("TZ", "UTC0", 1);
+        tzset();
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
         if (_udp.begin(RNS_UDP_PORT)) {
             DebugSerial.print("IF: UDP Listening on port "); DebugSerial.println(RNS_UDP_PORT);
         } else {
@@ -398,7 +402,7 @@ bool InterfaceManager::addEspNowPeer(const uint8_t* mac_addr) {
     esp_now_peer_info_t peerInfo = {}; // Initialize all fields to 0/false/etc.
     memcpy(peerInfo.peer_addr, mac_addr, 6);
     // peerInfo.channel = 0; // Use current channel by default
-    // peerInfo.encrypt = false; // TODO: Add configuration for encryption
+    peerInfo.encrypt = false; // Encryption disabled (requires shared keys)
     // peerInfo.ifidx = WIFI_IF_STA; // Use station interface? Or AP? Test which works best. WIFI_IF_AP might also be needed.
     esp_err_t add_result = esp_now_add_peer(&peerInfo);
     if (add_result != ESP_OK) {
@@ -535,8 +539,7 @@ void InterfaceManager::processLoRaInput() {
 void InterfaceManager::sendPacketViaLoRa(const uint8_t *packetBuffer, size_t packetLen, const uint8_t *destinationAddr) {
     if (!_loraInitialized || !_lora || !packetBuffer || packetLen == 0) return;
     
-    // LoRa is broadcast by nature, so we ignore destinationAddr for now
-    // In a more advanced implementation, you could use different frequencies/channels for different destinations
+    // LoRa is broadcast by nature, so destinationAddr is not used here.
     
     // Send packet
     int state = _lora->transmit(packetBuffer, packetLen);
@@ -562,7 +565,7 @@ void InterfaceManager::setupHAMModem() {
     if (_audioModem == nullptr) {
         _audioModem = new AudioModem(AudioModem::ModemType::BELL_202);
         if (_audioModem && !_audioModem->begin(HAM_MODEM_RX_PIN, HAM_MODEM_TX_PIN, AUDIO_MODEM_SAMPLE_RATE)) {
-            DebugSerial.println("! WARN: Audio modem initialization failed (stub implementation).");
+            DebugSerial.println("! WARN: Audio modem initialization failed.");
         } else {
             DebugSerial.println("IF: Audio modem initialized.");
         }
@@ -573,8 +576,9 @@ void InterfaceManager::setupHAMModem() {
     if (_winlink == nullptr) {
         _winlink = new Winlink();
         if (!_winlink->begin(APRS_CALLSIGN, WINLINK_PASSWORD)) {
-            DebugSerial.println("! WARN: Winlink initialization failed (stub implementation).");
+            DebugSerial.println("! WARN: Winlink initialization failed.");
         } else {
+            _winlink->setRawSender(InterfaceManager::winlinkSendRaw, this);
             DebugSerial.println("IF: Winlink initialized.");
         }
     }
@@ -686,6 +690,37 @@ static bool buildAX25UIFrame(const String& sourceCall, uint8_t sourceSsid,
     return AX25::encodeFrame(frame, out);
 }
 
+#ifdef WINLINK_ENABLED
+bool InterfaceManager::winlinkSendRaw(const uint8_t* data, size_t len, void* context) {
+    InterfaceManager* self = static_cast<InterfaceManager*>(context);
+    if (!self || !self->_hamModemInitialized || !data || len == 0) {
+        return false;
+    }
+    std::vector<uint8_t> kissEncoded;
+    KISSProcessor::encode(data, len, kissEncoded);
+    size_t sent = HAM_MODEM_SERIAL.write(kissEncoded.data(), kissEncoded.size());
+    return sent == kissEncoded.size();
+}
+#endif
+
+static String buildAprsWeatherTimestamp() {
+    struct tm timeinfo;
+    if (getLocalTime(&timeinfo, 1000)) {
+        char buf[7];
+        snprintf(buf, sizeof(buf), "%02d%02d%02d", timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min);
+        return String(buf);
+    }
+
+    const uint32_t minutes = millis() / 60000UL;
+    const uint32_t days = minutes / 1440UL;
+    const uint8_t day = (days % 31) + 1;
+    const uint8_t hour = (minutes / 60UL) % 24;
+    const uint8_t minute = minutes % 60;
+    char buf[7];
+    snprintf(buf, sizeof(buf), "%02u%02u%02u", day, hour, minute);
+    return String(buf);
+}
+
 void InterfaceManager::sendAPRSPacket(const char* destination, const char* message) {
     if (!_hamModemInitialized) {
         DebugSerial.println("! ERROR: HAM Modem not initialized for APRS");
@@ -750,7 +785,7 @@ void InterfaceManager::sendAPRSWeather(float temp, float humidity, float pressur
     }
 
     // Format: _DDHHMMc...s...g...t...r...p...P...h..b...
-    String info = "_000000";  // Time placeholder
+    String info = "_" + buildAprsWeatherTimestamp();
     info += "000"; // wind dir
     info += "000"; // wind speed
     info += "000"; // gust speed
@@ -954,23 +989,76 @@ bool InterfaceManager::publishToIPFS(const uint8_t* data, size_t len, String& ip
 }
 
 void InterfaceManager::sendPacketViaIPFS(const uint8_t *packetBuffer, size_t packetLen, const uint8_t *destinationAddr) {
-    // IPFS is primarily for content addressing, not direct packet transmission
-    // This could be used to:
-    // 1. Store packet content in IPFS
-    // 2. Send IPFS hash as a reference in Reticulum packet
-    // 3. Recipient fetches content from IPFS using hash
-    
     if (!_ipfsInitialized) {
         DebugSerial.println("! WARN: IPFS not initialized, cannot send packet");
         return;
     }
-    
-    // For now, this is a placeholder
-    // In a full implementation, you would:
-    // 1. Publish packet content to IPFS
-    // 2. Create a Reticulum packet containing the IPFS hash
-    // 3. Send the Reticulum packet via normal interfaces
-    
-    DebugSerial.println("! INFO: IPFS packet sending requires publishing implementation.");
+
+    String ipfsHash;
+    if (!publishToIPFS(packetBuffer, packetLen, ipfsHash)) {
+        DebugSerial.println("! ERROR: Failed to publish packet to IPFS");
+        return;
+    }
+    if (ipfsHash.length() == 0) {
+        DebugSerial.println("! ERROR: IPFS hash is empty");
+        return;
+    }
+
+    RnsPacketInfo info;
+    bool parsed = ReticulumPacket::deserialize(packetBuffer, packetLen, info);
+
+    uint8_t destHash[16] = {0};
+    if (parsed) {
+        memcpy(destHash, info.destination_hash, sizeof(destHash));
+    } else if (destinationAddr) {
+        memcpy(destHash, destinationAddr, RNS_ADDRESS_SIZE);
+    }
+
+    const String reference = String("ipfs:") + ipfsHash;
+    std::vector<uint8_t> payload(reference.begin(), reference.end());
+    if (payload.size() > RNS_MAX_PAYLOAD) {
+        DebugSerial.println("! ERROR: IPFS reference payload too large");
+        return;
+    }
+
+    uint8_t refBuffer[MAX_PACKET_SIZE];
+    size_t refLen = 0;
+    const uint8_t packetType = parsed ? info.packet_type : RNS_PACKET_DATA;
+    const uint8_t destType = parsed ? info.destination_type : RNS_DEST_PLAIN;
+    const uint8_t propagationType = parsed ? info.propagation_type : RNS_PROPAGATION_BROADCAST;
+    const uint8_t context = parsed ? info.context : RNS_CONTEXT_NONE;
+    const uint8_t hops = parsed ? info.hops : 0;
+
+    if (!ReticulumPacket::serialize(refBuffer, refLen, destHash, packetType, destType, propagationType, context, hops, payload)) {
+        DebugSerial.println("! ERROR: Failed to serialize IPFS reference packet");
+        return;
+    }
+
+    RouteEntry* route = nullptr;
+    if (destinationAddr) {
+        route = _routingTableRef.findRoute(destinationAddr);
+    }
+
+    if (route && route->interface != InterfaceType::IPFS) {
+        sendPacketVia(route->interface, refBuffer, refLen, destinationAddr);
+        return;
+    }
+
+    if (destinationAddr == nullptr || !route || route->interface == InterfaceType::IPFS) {
+        sendPacketViaEspNow(refBuffer, refLen, destinationAddr);
+        if (WiFi.status() == WL_CONNECTED) {
+            sendPacketViaWiFi(refBuffer, refLen, destinationAddr);
+        }
+#ifdef LORA_ENABLED
+        if (_loraInitialized) {
+            sendPacketViaLoRa(refBuffer, refLen, destinationAddr);
+        }
+#endif
+#ifdef HAM_MODEM_ENABLED
+        if (_hamModemInitialized) {
+            sendPacketViaHAMModem(refBuffer, refLen);
+        }
+#endif
+    }
 }
 #endif

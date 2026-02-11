@@ -80,7 +80,7 @@ bool serialize(uint8_t *buffer, size_t &len,
     uint8_t flags = (packet_type & 0b11) |
                     ((dest_type & 0b11) << 2) |
                     ((propagation_type & 0b1) << 4) |
-                    (0 << 5) |  // context_flag = 0 for now
+                    (0 << 5) |  // context_flag = 0 (unused)
                     (0 << 6) |  // header_type = 0 (HEADER_1)
                     (0 << 7);   // ifac_flag = 0 (no IFAC)
 
@@ -102,8 +102,7 @@ bool serialize(uint8_t *buffer, size_t &len,
 // --- Legacy Custom Format Functions (for Link layer) ---
 
 // Legacy serialize for data packets with sequence numbers
-// This is a stub implementation - the Link layer uses a different custom format
-// For now, we'll create a minimal compatible format
+// Legacy serialize for Link layer compatibility.
 bool serialize(uint8_t *buffer, size_t &len,
                const uint8_t* destination,
                const uint8_t* source,

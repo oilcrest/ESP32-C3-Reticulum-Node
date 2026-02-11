@@ -37,9 +37,14 @@ public:
     };
     
     Winlink();
+
+    using RawSender = bool (*)(const uint8_t* data, size_t len, void* context);
     
     // Initialize Winlink
     bool begin(const char* callsign, const char* password = "");
+
+    // Set raw frame sender callback (AX.25 frames)
+    void setRawSender(RawSender sender, void* context);
     
     // Connect to Winlink BBS
     bool connect(const char* bbsCallsign);
@@ -68,6 +73,11 @@ private:
     String _bbsCallsign;
     ConnectionState _state;
     uint16_t _sequenceNumber;
+
+    RawSender _rawSender = nullptr;
+    void* _rawSenderContext = nullptr;
+    std::vector<Message> _inbox;
+    std::vector<Message> _outbox;
     
     // Winlink protocol handlers
     bool handleConnect(const AX25::Frame& frame);

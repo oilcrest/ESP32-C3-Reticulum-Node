@@ -166,6 +166,10 @@ private:
     void audioCaptureLoop();
 #endif
 
+#if defined(HAM_MODEM_ENABLED) && defined(WINLINK_ENABLED)
+    static bool winlinkSendRaw(const uint8_t* data, size_t len, void* context);
+#endif
+
 };
 
 #endif // INTERFACE_MANAGER_H

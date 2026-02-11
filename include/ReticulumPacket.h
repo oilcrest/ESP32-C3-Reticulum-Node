@@ -82,7 +82,7 @@ struct RnsPacketInfo {
     uint8_t source_type = 0;                       // Legacy source type
     uint16_t packet_id = 0;                        // Legacy packet ID
     uint16_t sequence_number = 0;                  // Legacy sequence number
-    std::vector<uint8_t> payload;                  // Legacy payload (alias to data for now)
+    std::vector<uint8_t> payload;                  // Legacy payload (alias to data)
 
     RnsPacketInfo() : valid(false), packet_len(0) {}
 

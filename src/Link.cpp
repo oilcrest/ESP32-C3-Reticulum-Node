@@ -20,7 +20,7 @@ Link::Link(const uint8_t* destination, LinkManager& owner) :
      // Initialize sequence numbers randomly? Recommended by RNS spec.
     // randomSeed(analogRead(A0) ^ millis()); // Ensure seeded somewhere
     // _outgoingSequence = random(0, 0xFFFF);
-    // Let's start at 0 for easier debugging for now.
+    // Start at 0 for easier debugging.
 }
 
 Link::~Link() {

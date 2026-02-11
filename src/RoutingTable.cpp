@@ -94,7 +94,6 @@ void RoutingTable::update(const RnsPacketInfo &announcePacket, InterfaceType int
 
 RouteEntry* RoutingTable::findRoute(const uint8_t *destination_addr) {
     if (!destination_addr) return nullptr;
-    // TODO: Could optimize routing lookup (e.g., use std::map if many routes), but list is fine for small numbers.
     for (auto it = _routes.begin(); it != _routes.end(); ++it) {
         if (Utils::compareAddresses(it->destination_addr, destination_addr)) {
             return &(*it); // Return pointer to the found entry
