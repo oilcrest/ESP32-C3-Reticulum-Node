@@ -9,6 +9,8 @@
 #include <WiFi.h>
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
+#include <Update.h>
+#include <monocypher.h>
 
 extern ReticulumNode reticulumNode;
 
@@ -16,13 +18,71 @@ static WiFiServer _server(WEBSERVER_PORT);
 static const char* CONFIG_PATH = "/config.json";
 
 static void sendResponse(WiFiClient &client, int code, const char *contentType, const String &body) {
+    const char *statusText = "OK";
+    switch (code) {
+        case 200: statusText = "OK"; break;
+        case 201: statusText = "Created"; break;
+        case 400: statusText = "Bad Request"; break;
+        case 401: statusText = "Unauthorized"; break;
+        case 403: statusText = "Forbidden"; break;
+        case 404: statusText = "Not Found"; break;
+        case 500: statusText = "Internal Server Error"; break;
+        default: statusText = "OK"; break;
+    }
+
     client.print("HTTP/1.1 ");
     client.print(code);
-    client.print(" OK\r\n");
+    client.print(" "); client.print(statusText); client.print("\r\n");
     client.print("Content-Type: "); client.print(contentType); client.print("\r\n");
     client.print("Content-Length: "); client.print(body.length()); client.print("\r\n");
     client.print("Connection: close\r\n\r\n");
     client.print(body);
+}
+
+static void sendUnauthorized(WiFiClient &client) {
+    const String body = "Unauthorized";
+    client.print("HTTP/1.1 401 Unauthorized\r\n");
+    client.print("WWW-Authenticate: Bearer realm=\"Reticulum\"\r\n");
+    client.print("Content-Type: text/plain\r\n");
+    client.print("Content-Length: "); client.print(body.length()); client.print("\r\n");
+    client.print("Connection: close\r\n\r\n");
+    client.print(body);
+}
+
+#if JSON_CONFIG_ENABLED
+static String getSavedApiToken() {
+    if (!SPIFFS.exists(CONFIG_PATH)) return String();
+    File f = SPIFFS.open(CONFIG_PATH, FILE_READ);
+    if (!f) return String();
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, f);
+    f.close();
+    if (err) return String();
+    if (!doc.containsKey("api")) return String();
+    JsonObject api = doc["api"];
+    if (!api.containsKey("token")) return String();
+    return api["token"].as<String>();
+}
+#endif
+
+static bool checkAuth(const String &authHeader) {
+#if WEBSERVER_AUTH_ENABLED
+    String expected;
+#if JSON_CONFIG_ENABLED
+    expected = getSavedApiToken();
+#endif
+    expected.trim();
+    // If no token configured, allow bootstrap (first-time config)
+    if (expected.length() == 0) return true;
+
+    String token = authHeader;
+    token.trim();
+    if (token.startsWith("Bearer ")) token = token.substring(7);
+    token.trim();
+    return token == expected;
+#else
+    (void)authHeader; return true;
+#endif
 }
 
 static String readLine(WiFiClient &c, unsigned long timeout=1000) {
@@ -53,12 +113,24 @@ void processHttpClient(WiFiClient &client) {
 
     // Read headers
     int contentLength = 0;
+    String authHeader;
+    String signatureHex;
+    String fwVersion;
     while (true) {
         String line = readLine(client);
         if (line.length() <= 2) break; // \r\n
         line.trim();
         if (line.startsWith("Content-Length:")) {
             contentLength = line.substring(15).toInt();
+        } else if (line.startsWith("Authorization:")) {
+            authHeader = line.substring(14);
+            authHeader.trim();
+        } else if (line.startsWith("X-Signature-Ed25519:")) {
+            signatureHex = line.substring(20);
+            signatureHex.trim();
+        } else if (line.startsWith("X-FW-Version:")) {
+            fwVersion = line.substring(13);
+            fwVersion.trim();
         }
     }
 
@@ -85,6 +157,7 @@ void processHttpClient(WiFiClient &client) {
         sendResponse(client, 200, "application/json", out);
 
     } else if (method == "GET" && path == "/api/v1/config") {
+        if (!checkAuth(authHeader)) { sendUnauthorized(client); return; }
         DynamicJsonDocument doc(1024);
         if (SPIFFS.exists(CONFIG_PATH)) {
             File f = SPIFFS.open(CONFIG_PATH, FILE_READ);
@@ -102,6 +175,7 @@ void processHttpClient(WiFiClient &client) {
         sendResponse(client, 200, "application/json", out);
 
     } else if (method == "POST" && path == "/api/v1/config") {
+        if (!checkAuth(authHeader)) { sendUnauthorized(client); return; }
         DynamicJsonDocument doc(2048);
         DeserializationError err = deserializeJson(doc, body);
         if (err) { sendResponse(client, 400, "text/plain", "Invalid JSON"); return; }
@@ -124,17 +198,76 @@ void processHttpClient(WiFiClient &client) {
         sendResponse(client, 200, "application/json", out);
 
     } else if (method == "POST" && path == "/api/v1/config/save") {
+        if (!checkAuth(authHeader)) { sendUnauthorized(client); return; }
 #if JSON_CONFIG_ENABLED
         if (SPIFFS.exists(CONFIG_PATH)) sendResponse(client, 200, "text/plain", "saved"); else sendResponse(client, 500, "text/plain", "no config to save");
 #else
         sendResponse(client, 404, "text/plain", "JSON config disabled");
 #endif
 
+    } else if (method == "POST" && path == "/api/v1/ota") {
+        // Signed OTA upload. Requires OTA_ENABLED and a configured Ed25519 public key in config.json
+        if (!checkAuth(authHeader)) { sendUnauthorized(client); return; }
+#if OTA_ENABLED
+        if (body.length() == 0) { sendResponse(client, 400, "text/plain", "Empty body"); return; }
+        if (signatureHex.length() == 0) { sendResponse(client, 400, "text/plain", "Missing X-Signature-Ed25519 header"); return; }
+
+        String pubHex;
+#if JSON_CONFIG_ENABLED
+        // Load public key from config
+        DynamicJsonDocument cdoc(1024);
+        if (SPIFFS.exists(CONFIG_PATH)) {
+            File cf = SPIFFS.open(CONFIG_PATH, FILE_READ);
+            if (cf) {
+                if (deserializeJson(cdoc, cf) == DeserializationError::Ok) {
+                    if (cdoc.containsKey("api") && cdoc["api"].containsKey("public_key")) pubHex = cdoc["api"]["public_key"].as<String>();
+                }
+                cf.close();
+            }
+        }
+#endif
+        if (pubHex.length() == 0) { sendResponse(client, 400, "text/plain", "No public key configured"); return; }
+
+        auto hexToBin = [](const String &hex, uint8_t *out, size_t expectedLen)->bool {
+            if ((size_t)hex.length() != expectedLen*2) return false;
+            for (size_t i=0;i<expectedLen;i++) {
+                char h = hex.charAt(2*i);
+                char l = hex.charAt(2*i+1);
+                auto val = [](char c)->int { if (c >= '0' && c <= '9') return c - '0'; if (c >= 'a' && c <= 'f') return c - 'a' + 10; if (c >= 'A' && c <= 'F') return c - 'A' + 10; return -1; };
+                int hi = val(h); int lo = val(l);
+                if (hi < 0 || lo < 0) return false;
+                out[i] = (uint8_t)((hi << 4) | lo);
+            }
+            return true;
+        };
+
+        uint8_t sig[64]; uint8_t pub[32];
+        if (!hexToBin(signatureHex, sig, 64)) { sendResponse(client, 400, "text/plain", "Bad signature format (expected 128 hex chars)"); return; }
+        if (!hexToBin(pubHex, pub, 32)) { sendResponse(client, 400, "text/plain", "Bad public_key format (expected 64 hex chars)"); return; }
+
+        // Verify signature (Ed25519)
+        int ok = crypto_ed25519_verify(sig, (const uint8_t*)body.c_str(), body.length(), pub);
+        if (ok != 0) { sendResponse(client, 403, "text/plain", "Invalid signature"); return; }
+
+        // Apply OTA
+        if (!Update.begin((size_t)body.length())) { sendResponse(client, 500, "text/plain", "OTA begin failed"); return; }
+        size_t written = Update.write((const uint8_t*)body.c_str(), body.length());
+        if (written != (size_t)body.length()) { sendResponse(client, 500, "text/plain", "Write failed"); return; }
+        if (!Update.end(true)) { sendResponse(client, 500, "text/plain", "OTA finalize failed"); return; }
+        sendResponse(client, 200, "text/plain", "ok");
+        delay(250);
+        ESP.restart();
+#else
+        sendResponse(client, 404, "text/plain", "OTA disabled");
+#endif
+
     } else if (method == "POST" && path == "/api/v1/restart") {
+        if (!checkAuth(authHeader)) { sendUnauthorized(client); return; }
         sendResponse(client, 200, "text/plain", "restarting");
         delay(250); ESP.restart();
 
     } else if (method == "GET" && path == "/api/v1/metrics") {
+        if (!checkAuth(authHeader)) { sendUnauthorized(client); return; }
 #if METRICS_ENABLED
         DynamicJsonDocument doc(512);
         doc["heap_free"] = ESP.getFreeHeap();

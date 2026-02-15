@@ -97,6 +97,12 @@ extern DebugSerialShim DebugSerial; // Use USB/UART0 for debug (Arduino Serial M
 #define WEBSERVER_PORT 80
 #endif
 
+// Web UI authentication (Bearer token). When enabled and a token is present
+// in the runtime JSON config the REST API will require Authorization: Bearer <token>
+#ifndef WEBSERVER_AUTH_ENABLED
+#define WEBSERVER_AUTH_ENABLED 1
+#endif
+
 // Enable runtime JSON config persisted in LittleFS/SPIFFS
 #ifndef JSON_CONFIG_ENABLED
 #define JSON_CONFIG_ENABLED 0

@@ -18,5 +18,10 @@
   },
   "logging": {
     "level": "info"
+  },
+  "api": {
+    "auth_enabled": true,
+    "token": "CHANGE_ME_generate_a_strong_token",
+    "public_key": ""  
   }
 }

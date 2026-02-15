@@ -16,6 +16,22 @@ All endpoints require authentication when enabled (future: token / password prot
   - Request soft restart of node (admin only).
 - GET /api/v1/metrics
   - Prometheus-style or JSON metrics endpoint (if METRICS_ENABLED).
+- POST /api/v1/ota
+  - Upload a signed firmware image for OTA. Requires `OTA_ENABLED` and an Ed25519 `public_key` in `/config.json` under `api.public_key`.
+  - Headers: `X-Signature-Ed25519: <hex-signature>` (64-byte signature, hex-encoded)
+  - Body: raw firmware binary (application/octet-stream)
+
+Example (host):
+
+curl -X POST \
+  -H "Authorization: Bearer <API_TOKEN>" \
+  -H "X-Signature-Ed25519: <hex-signature>" \
+  --data-binary @firmware.bin \
+  http://<node-ip>/api/v1/ota
+
+Security notes:
+- When `api.token` is set in config, all sensitive endpoints require `Authorization: Bearer <token>`.
+- Keep the private signing key offline and only sign release artifacts.
 
 ## WebSocket
 - /ws/console — real-time log stream and packet events

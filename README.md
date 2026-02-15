@@ -483,7 +483,7 @@ See `include/Config.h` for all configurable parameters.
 - `docs/IPFS_INTEGRATION.md`: IPFS integration guide
 - `docs/ENHANCED_FEATURES.md`: Enhanced features documentation
 - `docs/ROADMAP.md`: Project roadmap and planned enhancements
-- `docs/API.md`: Web UI / REST API specification
+- `docs/API.md`: Web UI / REST API specification (includes Web UI auth + signed OTA (Ed25519) examples)
 
 ### Appendix D: Revision History
 See `CHANGELOG.md` for complete revision history.
