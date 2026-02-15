@@ -141,6 +141,10 @@ void RoutingTable::print() {
     DebugSerial.println("---------------------");
 }
 
+size_t RoutingTable::getRouteCount() const {
+    return _routes.size();
+}
+
 // --- Announce Forwarding Prevention ---
 bool RoutingTable::shouldForwardAnnounce(uint16_t packet_id, const uint8_t* source_addr) {
     if (!source_addr) return false;

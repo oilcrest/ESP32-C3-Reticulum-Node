@@ -7,6 +7,10 @@
 
 LinkManager::LinkManager(ReticulumNode& owner) : _ownerRef(owner) {}
 
+size_t LinkManager::getActiveLinkCount() const {
+    return _activeLinks.size();
+}
+
 // Get existing link or create if possible
 LinkManager::LinkPtr LinkManager::getOrCreateLink(const uint8_t* destination, bool create) {
     if (!destination) {

@@ -39,6 +39,9 @@ public:
     // Called by Link::teardown or externally if needed
     void removeLink(const uint8_t* destination);
 
+    // Return the number of active links
+    size_t getActiveLinkCount() const;
+
     // --- Methods needed by Link instances (called via ownerRef) ---
     const uint8_t* getNodeAddress() const;
     uint16_t getNextPacketId();

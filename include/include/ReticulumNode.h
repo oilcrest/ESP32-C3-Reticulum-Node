@@ -27,7 +27,8 @@ public:
     const uint8_t* getNodeAddress() const { return _nodeAddress; }
     uint16_t getNextPacketId(); // Now public for LinkManager access
     InterfaceManager& getInterfaceManager() { return _interfaceManager; }
-    // RoutingTable& getRoutingTable() { return _routingTable; } // Expose if needed
+    LinkManager& getLinkManager() { return _linkManager; }
+    RoutingTable& getRoutingTable() { return _routingTable; }
 
     // --- Application Layer Integration ---
     // Sets the handler function for received link data

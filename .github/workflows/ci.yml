@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: |
+          python -m pip install -U pip
+          pip install -U platformio
+          pio --version
+
+      - name: Update PlatformIO platforms & libraries
+        run: |
+          pio update
+
+      - name: Build default ESP32-C3 environment
+        run: pio run -e esp32-c3-devkitm-1
+
+      - name: Build ESP32 (original) environment
+        run: pio run -e esp32dev
+
+      - name: Run unit tests (PlatformIO)
+        run: pio test -e esp32-c3-devkitm-1

@@ -1,0 +1,22 @@
+{
+  "node_name": "esp32-rns-node",
+  "wifi": {
+    "ssid": "YOUR_SSID",
+    "password": "YOUR_PASSWORD"
+  },
+  "aprs": {
+    "callsign": "N0CALL",
+    "ssid": 0,
+    "symbol": "[",
+    "comment": "Reticulum"
+  },
+  "interfaces": {
+    "wifi_udp": true,
+    "esp_now": false,
+    "lora": false,
+    "ham_modem": false
+  },
+  "logging": {
+    "level": "info"
+  }
+}

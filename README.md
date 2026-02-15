@@ -482,6 +482,8 @@ See `include/Config.h` for all configurable parameters.
 - `docs/HAM_MODEM.md`: HAM modem interface guide
 - `docs/IPFS_INTEGRATION.md`: IPFS integration guide
 - `docs/ENHANCED_FEATURES.md`: Enhanced features documentation
+- `docs/ROADMAP.md`: Project roadmap and planned enhancements
+- `docs/API.md`: Web UI / REST API specification
 
 ### Appendix D: Revision History
 See `CHANGELOG.md` for complete revision history.

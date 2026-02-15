@@ -34,6 +34,8 @@ This document serves as the master index for all technical documentation related
 
 #### 2.1.4 Feature Documentation
 - **docs/ENHANCED_FEATURES.md**: Enhanced features documentation (audio modem, AX.25, APRS, Winlink)
+- **docs/ROADMAP.md**: Project roadmap and planned enhancements
+- **docs/API.md**: Web UI / REST API specification and endpoints
 
 ---
 
