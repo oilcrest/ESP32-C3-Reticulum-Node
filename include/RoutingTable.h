@@ -59,6 +59,9 @@ public:
     // Prints the routing table to Serial
     void print();
 
+    // Return current route count
+    size_t getRouteCount() const;
+
     // Announce forwarding prevention
     bool shouldForwardAnnounce(uint16_t packet_id, const uint8_t* source_addr);
     void markAnnounceForwarded(uint16_t packet_id, const uint8_t* source_addr);

@@ -88,6 +88,36 @@ extern DebugSerialShim DebugSerial; // Use USB/UART0 for debug (Arduino Serial M
 #define DEMO_TRAFFIC_ENABLED 0
 #endif
 
+// --- Runtime features & Web UI (disabled by default) ---
+// Enable a lightweight Web UI + REST API for status/config (requires enabling and adding AsyncWebServer to build flags)
+#ifndef WEBSERVER_ENABLED
+#define WEBSERVER_ENABLED 0
+#endif
+#ifndef WEBSERVER_PORT
+#define WEBSERVER_PORT 80
+#endif
+
+// Enable runtime JSON config persisted in LittleFS/SPIFFS
+#ifndef JSON_CONFIG_ENABLED
+#define JSON_CONFIG_ENABLED 0
+#endif
+// Example path: /config.json in SPIFFS/LittleFS
+
+// Enable secure OTA (signed updates) support (requires OTA code + signature checks)
+#ifndef OTA_ENABLED
+#define OTA_ENABLED 0
+#endif
+
+// BLE provisioning (GATT) for WiFi / callsign setup
+#ifndef BLE_PROVISIONING_ENABLED
+#define BLE_PROVISIONING_ENABLED 0
+#endif
+
+// Runtime metrics endpoint (JSON) and adjustable log levels
+#ifndef METRICS_ENABLED
+#define METRICS_ENABLED 0
+#endif
+
 // --- WiFi Credentials ---
 extern const char *WIFI_SSID; // <<< CHANGE ME in Config.cpp
 extern const char *WIFI_PASSWORD; // <<< CHANGE ME in Config.cpp
